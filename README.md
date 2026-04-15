@@ -1,0 +1,1 @@
+i would like to check github every 6 hours and count how many commits have been made in last 6 hours and save how many, to which repos and save too markdown file in i would like to check github every 6 hours and count how many commits have been made in last 6 hours and save how many, to which repos
