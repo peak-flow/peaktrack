@@ -1,0 +1,5 @@
+.env
+cron.log
+__pycache__/
+*.pyc
+.runner.pid
