@@ -11,8 +11,15 @@ REPOS_CONFIG="$SCRIPT_DIR/repos.txt"
 REPORT_FILE="$REPO_ROOT/commit_report.md"
 HOURS=6
 
+# Load .env if present (useful when run from cron where env is minimal)
+if [[ -f "$REPO_ROOT/.env" ]]; then
+  # shellcheck disable=SC1091
+  set -a; source "$REPO_ROOT/.env"; set +a
+fi
+
 if [[ -z "${GITHUB_TOKEN:-}" ]]; then
   echo "ERROR: GITHUB_TOKEN environment variable is not set." >&2
+  echo "       Set it in the environment or in $REPO_ROOT/.env" >&2
   exit 1
 fi
 
