@@ -1,0 +1,3 @@
+# List of GitHub repos to monitor (one per line, format: owner/repo)
+# Lines starting with # are ignored.
+peak-flow/peaktrack
