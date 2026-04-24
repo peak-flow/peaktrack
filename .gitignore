@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+*.pyo
+commit_reports/tracker.log
+commit_reports/report.md
