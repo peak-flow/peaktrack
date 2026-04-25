@@ -1,0 +1,7 @@
+{
+  "github_token": "YOUR_PAT_HERE",
+  "repos": [
+    "peak-flow/peaktrack"
+  ],
+  "hours": 6
+}
