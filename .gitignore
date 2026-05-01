@@ -1,1 +1,3 @@
 .last_tracker_run
+.tracker.pid
+commit_tracker.log
