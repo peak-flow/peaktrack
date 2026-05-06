@@ -1,0 +1,82 @@
+name: Commit Log (every 6 hours)
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'   # 00:00, 06:00, 12:00, 18:00 UTC
+  workflow_dispatch:          # allow manual trigger
+
+jobs:
+  log-commits:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compute timestamps
+        id: ts
+        run: |
+          echo "now=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+          echo "since=$(date -u -d '6 hours ago' +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+          echo "label=$(date -u +%Y-%m-%d\ %H:%M\ UTC)" >> "$GITHUB_OUTPUT"
+          echo "window=$(date -u -d '6 hours ago' +%H:%M)→$(date -u +%H:%M) UTC" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch commits via GitHub API
+        id: commits
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          SINCE="${{ steps.ts.outputs.since }}"
+          NOW="${{ steps.ts.outputs.now }}"
+          curl -s \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/commits?since=$SINCE&until=$NOW&per_page=100" \
+            > /tmp/commits.json
+          COUNT=$(python3 -c "import json; d=json.load(open('/tmp/commits.json')); print(len(d))")
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+
+      - name: Append to commit-log.md
+        run: |
+          COUNT="${{ steps.commits.outputs.count }}"
+          LABEL="${{ steps.ts.outputs.label }}"
+          WINDOW="${{ steps.ts.outputs.window }}"
+
+          {
+            echo "## $LABEL (window: $WINDOW)"
+            echo ""
+            echo "**Repository:** \`${{ github.repository }}\`  "
+            echo "**Total commits:** $COUNT"
+            echo ""
+
+            if [[ "$COUNT" -eq 0 ]]; then
+              echo "No commits in this window."
+            else
+              echo "| SHA | Author | Message |"
+              echo "|-----|--------|---------|"
+              python3 -c "
+          import json
+          data = json.load(open('/tmp/commits.json'))
+          for c in data:
+              sha = c['sha'][:7]
+              author = (c.get('author') or {}).get('login') or c['commit']['author']['name']
+              msg = c['commit']['message'].split('\n')[0][:72].replace('|', r'\|')
+              print(f'| \`{sha}\` | {author} | {msg} |')
+          "
+            fi
+
+            echo ""
+            echo "---"
+            echo ""
+          } >> commit-log.md
+
+      - name: Commit and push log
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add commit-log.md
+          git diff --cached --quiet || git commit -m "chore: commit log $(date -u +%Y-%m-%d\ %H:%M\ UTC)"
+          git push
