@@ -1,0 +1,13 @@
+{
+  "github_token": "ghp_YOUR_PERSONAL_ACCESS_TOKEN_HERE",
+
+  "repos": [
+    "peak-flow/peaktrack"
+  ],
+
+  "orgs": [],
+
+  "users": [],
+
+  "include_zero_repos": false
+}
