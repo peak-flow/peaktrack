@@ -1,0 +1,121 @@
+name: Commit Tracker
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'   # runs at 00:00, 06:00, 12:00, 18:00 UTC every day
+  workflow_dispatch:          # allow manual trigger from the Actions tab
+
+jobs:
+  track-commits:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history so commit queries work across all branches
+
+      - name: Collect commits from last 6 hours
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          SINCE=$(date -u -d '6 hours ago' '+%Y-%m-%dT%H:%M:%SZ')
+          UNTIL=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+          REPORT_FILE="commit-reports/COMMIT_LOG.md"
+
+          echo "Fetching commits for $REPO since $SINCE"
+
+          # --- Gather all branches ---
+          BRANCHES=$(gh api "repos/$REPO/branches?per_page=100" --paginate \
+            --jq '.[].name')
+
+          declare -A SEEN_SHAS   # deduplicate commits that appear on multiple branches
+          TOTAL=0
+          BRANCH_SUMMARY=""
+          COMMIT_ROWS=""
+
+          while IFS= read -r branch; do
+            PAGE=1
+            BRANCH_COUNT=0
+
+            while true; do
+              COMMITS=$(gh api \
+                "repos/$REPO/commits?sha=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))" "$branch")&since=$SINCE&until=$UNTIL&per_page=100&page=$PAGE" \
+                --jq '.[] | [.sha, .commit.author.name, .commit.author.date, .commit.message] | @tsv' 2>/dev/null || true)
+
+              [[ -z "$COMMITS" ]] && break
+
+              while IFS=$'\t' read -r sha author date msg; do
+                [[ -z "$sha" ]] && continue
+                SHORT_SHA="${sha:0:7}"
+                [[ "${SEEN_SHAS[$SHORT_SHA]+set}" == "set" ]] && continue
+                SEEN_SHAS[$SHORT_SHA]=1
+
+                # Sanitise message: first line only, truncate at 80 chars
+                FIRST_LINE=$(echo "$msg" | head -1 | cut -c1-80)
+                TS=$(echo "$date" | sed 's/T/ /; s/Z/ UTC/')
+
+                COMMIT_ROWS+="| \`$SHORT_SHA\` | $(echo "$branch" | cut -c1-30) | $author | $FIRST_LINE | $TS |"$'\n'
+                BRANCH_COUNT=$((BRANCH_COUNT + 1))
+                TOTAL=$((TOTAL + 1))
+              done <<< "$COMMITS"
+
+              PAGE=$((PAGE + 1))
+            done
+
+            if [[ $BRANCH_COUNT -gt 0 ]]; then
+              BRANCH_SUMMARY+="| \`$branch\` | $BRANCH_COUNT |"$'\n'
+            fi
+          done <<< "$BRANCHES"
+
+          # --- Build the new section ---
+          SECTION="## $(date -u '+%Y-%m-%d %H:%M UTC')"$'\n'
+          SECTION+="**Repository:** \`$REPO\`  "$'\n'
+          SECTION+="**Window:** $SINCE → $UNTIL  "$'\n'
+          SECTION+="**Total unique commits:** $TOTAL"$'\n\n'
+
+          if [[ $TOTAL -gt 0 ]]; then
+            SECTION+="### Commits by branch"$'\n\n'
+            SECTION+="| Branch | Commits |"$'\n'
+            SECTION+="|--------|---------|"$'\n'
+            SECTION+="$BRANCH_SUMMARY"$'\n'
+
+            SECTION+="### All commits"$'\n\n'
+            SECTION+="| SHA | Branch | Author | Message | Time |"$'\n'
+            SECTION+="|-----|--------|--------|---------|------|"$'\n'
+            SECTION+="$COMMIT_ROWS"$'\n'
+          else
+            SECTION+="_No commits in this window._"$'\n\n'
+          fi
+
+          SECTION+="---"$'\n\n'
+
+          # --- Prepend to the log (newest entry first) ---
+          HEADER="# Commit Activity Log — \`$REPO\`"$'\n\n'
+          HEADER+="_Auto-generated every 6 hours by the commit-tracker workflow._"$'\n\n'
+          HEADER+="---"$'\n\n'
+
+          EXISTING=""
+          if [[ -f "$REPORT_FILE" ]]; then
+            # Strip the static header so we can rebuild it
+            EXISTING=$(tail -n +5 "$REPORT_FILE")
+          fi
+
+          printf '%s%s%s' "$HEADER" "$SECTION" "$EXISTING" > "$REPORT_FILE"
+          echo "Report written to $REPORT_FILE"
+
+      - name: Commit updated report
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add commit-reports/COMMIT_LOG.md
+          git diff --cached --quiet && echo "Nothing changed." || \
+            git commit -m "chore: commit activity report $(date -u '+%Y-%m-%d %H:%M UTC') [skip ci]"
+
+      - name: Push report
+        run: git push origin HEAD
