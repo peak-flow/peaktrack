@@ -1,0 +1,39 @@
+name: Commit Tracker
+
+on:
+  schedule:
+    # Every 6 hours: midnight, 6am, noon, 6pm UTC
+    - cron: "0 0,6,12,18 * * *"
+  workflow_dispatch: # allow manual runs
+
+permissions:
+  contents: write  # needed to commit commit-tracker.md back to the repo
+
+jobs:
+  track:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          # Use a PAT so the commit shows up under the right identity
+          # and so the workflow can push back
+          token: ${{ secrets.COMMIT_TRACKER_PAT || secrets.GITHUB_TOKEN }}
+
+      - name: Run tracker script
+        env:
+          GITHUB_TOKEN: ${{ secrets.COMMIT_TRACKER_PAT || secrets.GITHUB_TOKEN }}
+        run: python3 scripts/track_commits.py
+
+      - name: Commit and push updated log
+        run: |
+          git config user.name  "commit-tracker[bot]"
+          git config user.email "commit-tracker[bot]@users.noreply.github.com"
+          git add commit-tracker.md
+          if git diff --cached --quiet; then
+            echo "Nothing to commit."
+          else
+            git commit -m "chore: update commit-tracker log [skip ci]"
+            git push
+          fi
