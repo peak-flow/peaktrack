@@ -1,0 +1,112 @@
+name: Commit Tracker
+
+on:
+  schedule:
+    # Runs at 00:00, 06:00, 12:00, 18:00 UTC every day
+    - cron: "0 */6 * * *"
+  workflow_dispatch: # allow manual runs
+
+permissions:
+  contents: write
+
+jobs:
+  track-commits:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history so git log --since works
+
+      - name: Count commits in last 6 hours
+        id: count
+        run: |
+          SINCE=$(date -u -d "6 hours ago" +"%Y-%m-%dT%H:%M:%SZ")
+          NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          NOW_HUMAN=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          REPO="${{ github.repository }}"
+
+          # Fetch all remote refs so we can see every branch
+          git fetch --all --quiet
+
+          COMMITS=$(git log --remotes --no-merges \
+            --since="6 hours ago" \
+            --format="%H|%s|%an" 2>/dev/null || true)
+
+          if [ -z "$COMMITS" ]; then
+            COUNT=0
+          else
+            COUNT=$(echo "$COMMITS" | wc -l)
+          fi
+
+          echo "since=$SINCE"   >> "$GITHUB_OUTPUT"
+          echo "now=$NOW"       >> "$GITHUB_OUTPUT"
+          echo "count=$COUNT"   >> "$GITHUB_OUTPUT"
+          echo "human=$NOW_HUMAN" >> "$GITHUB_OUTPUT"
+
+          # Build the table rows into a temp file so newlines survive
+          TABLE_FILE=$(mktemp)
+          if [ "$COUNT" -eq 0 ]; then
+            echo "_No commits in this window._" > "$TABLE_FILE"
+          else
+            {
+              echo "| SHA | Message | Author |"
+              echo "|-----|---------|--------|"
+              while IFS='|' read -r sha msg author; do
+                short="${sha:0:7}"
+                echo "| [\`$short\`](https://github.com/$REPO/commit/$sha) | $msg | $author |"
+              done <<< "$COMMITS"
+            } > "$TABLE_FILE"
+          fi
+
+          echo "table_file=$TABLE_FILE" >> "$GITHUB_OUTPUT"
+
+      - name: Append to commit_log.md
+        run: |
+          LOG="commit_log.md"
+          SINCE="${{ steps.count.outputs.since }}"
+          NOW="${{ steps.count.outputs.now }}"
+          COUNT="${{ steps.count.outputs.count }}"
+          HUMAN="${{ steps.count.outputs.human }}"
+          TABLE_FILE="${{ steps.count.outputs.table_file }}"
+          REPO="${{ github.repository }}"
+
+          # Create file with header if it doesn't exist
+          if [ ! -f "$LOG" ]; then
+            cat > "$LOG" <<'HEADER'
+# GitHub Commit Log
+
+Auto-updated every 6 hours by the Commit Tracker workflow.
+
+---
+
+HEADER
+          fi
+
+          # Append this window's entry
+          {
+            echo "## $HUMAN"
+            echo ""
+            echo "| Field | Value |"
+            echo "|-------|-------|"
+            echo "| **Repository** | $REPO |"
+            echo "| **Window** | \`$SINCE\` → \`$NOW\` |"
+            echo "| **Commit count** | **$COUNT** |"
+            echo ""
+            cat "$TABLE_FILE"
+            echo ""
+            echo "---"
+            echo ""
+          } >> "$LOG"
+
+      - name: Commit and push log
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add commit_log.md
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "chore: commit log update ${{ steps.count.outputs.human }} (${{ steps.count.outputs.count }} commits)"
+            git push
+          fi
