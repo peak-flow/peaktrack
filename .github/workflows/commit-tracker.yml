@@ -1,0 +1,89 @@
+name: Commit Activity Tracker
+
+on:
+  schedule:
+    # Runs every 6 hours at minute 0
+    - cron: '0 */6 * * *'
+  workflow_dispatch: # Allow manual runs
+
+permissions:
+  contents: write
+
+jobs:
+  track-commits:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Track commits from last 6 hours
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ORG: peak-flow
+        run: |
+          set -euo pipefail
+
+          SINCE=$(date -u -d '6 hours ago' '+%Y-%m-%dT%H:%M:%SZ')
+          UNTIL=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+          REPORT_FILE="commit-activity.md"
+
+          echo "Checking commits since: $SINCE"
+
+          # Fetch all repos in the org (up to 100)
+          REPOS=$(gh api "orgs/${ORG}/repos?per_page=100&sort=pushed" \
+            --jq '.[].name' 2>/dev/null || \
+            gh api "users/${ORG}/repos?per_page=100&sort=pushed" \
+            --jq '.[].name')
+
+          TOTAL_COMMITS=0
+          REPORT_LINES=()
+
+          while IFS= read -r REPO; do
+            COUNT=$(gh api \
+              "repos/${ORG}/${REPO}/commits?since=${SINCE}&until=${UNTIL}&per_page=100" \
+              --jq 'length' 2>/dev/null || echo "0")
+
+            if [ "$COUNT" -gt 0 ] 2>/dev/null; then
+              REPORT_LINES+=("| \`${ORG}/${REPO}\` | ${COUNT} |")
+              TOTAL_COMMITS=$((TOTAL_COMMITS + COUNT))
+            fi
+          done <<< "$REPOS"
+
+          # Build the markdown report
+          {
+            echo "# Commit Activity Report"
+            echo ""
+            echo "**Period:** \`${SINCE}\` → \`${UNTIL}\`"
+            echo ""
+            echo "**Total commits:** ${TOTAL_COMMITS}"
+            echo ""
+
+            if [ ${#REPORT_LINES[@]} -eq 0 ]; then
+              echo "_No commits in the last 6 hours._"
+            else
+              echo "| Repository | Commits |"
+              echo "|------------|---------|"
+              for line in "${REPORT_LINES[@]}"; do
+                echo "$line"
+              done
+            fi
+
+            echo ""
+            echo "---"
+            echo "_Last updated: $(date -u '+%Y-%m-%d %H:%M:%S UTC')_"
+          } > "$REPORT_FILE"
+
+          cat "$REPORT_FILE"
+
+      - name: Commit and push report
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add commit-activity.md
+          if git diff --cached --quiet; then
+            echo "No changes to commit (no new commits detected)."
+          else
+            git commit -m "chore: update commit activity report [skip ci]"
+            git push
+          fi
