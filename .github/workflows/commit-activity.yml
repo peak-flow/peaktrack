@@ -1,0 +1,59 @@
+name: Commit Activity Log
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'   # every 6 hours
+  workflow_dispatch:          # allow manual runs
+
+permissions:
+  contents: write
+
+jobs:
+  log-commits:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Count commits in last 6 hours and update log
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: peak-flow/peaktrack
+        run: |
+          NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          SINCE=$(date -u -d '6 hours ago' +%Y-%m-%dT%H:%M:%SZ)
+
+          # Fetch commits since 6 hours ago via GitHub API
+          RESPONSE=$(curl -s -H "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/$REPO/commits?since=$SINCE&per_page=100")
+
+          COUNT=$(echo "$RESPONSE" | jq 'length')
+
+          # Build the markdown entry
+          {
+            echo "## Check: $NOW"
+            echo ""
+            echo "| Repository | Commits in Last 6h |"
+            echo "|---|---|"
+            echo "| $REPO | $COUNT |"
+            echo ""
+            echo "**Total commits:** $COUNT"
+            echo ""
+            if [ "$COUNT" -gt 0 ]; then
+              echo "$RESPONSE" | jq -r '.[] | "- `" + (.sha[0:7]) + "` — " + .commit.message + " (" + .commit.author.name + ", " + .commit.author.date + ")"'
+            else
+              echo "No commits in the last 6 hours."
+            fi
+            echo ""
+            echo "---"
+            echo ""
+          } >> commit-activity-log.md
+
+      - name: Commit and push log update
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add commit-activity-log.md
+          git diff --cached --quiet || git commit -m "chore: update commit activity log $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          git push
