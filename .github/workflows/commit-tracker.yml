@@ -1,0 +1,94 @@
+name: Commit Activity Tracker
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'   # every 6 hours: 00:00, 06:00, 12:00, 18:00 UTC
+  workflow_dispatch:          # allow manual trigger
+
+permissions:
+  contents: write             # needed to push commit-log.md
+
+jobs:
+  log-commits:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Count and log recent commits
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          python3 - <<'PYEOF'
+          import json, os, subprocess, sys
+          from datetime import datetime, timezone, timedelta
+
+          HOURS = 6
+          now   = datetime.now(timezone.utc)
+          since = (now - timedelta(hours=HOURS)).strftime("%Y-%m-%dT%H:%M:%SZ")
+          repo  = os.environ["REPO"]
+          token = os.environ["GH_TOKEN"]
+
+          # Fetch commits across all branches via REST API using gh CLI
+          result = subprocess.run(
+              ["gh", "api", f"repos/{repo}/commits",
+               "--paginate",
+               "-f", f"since={since}",
+               "-f", "per_page=100",
+               "--jq", "[.[] | {sha: .sha[:7], msg: (.commit.message | split(\"\n\")[0]), author: (.commit.author.name // .author.login // \"unknown\")}]"],
+              capture_output=True, text=True, env={**os.environ, "GH_TOKEN": token}
+          )
+          if result.returncode != 0:
+              print(result.stderr, file=sys.stderr)
+              sys.exit(1)
+
+          commits = json.loads(result.stdout or "[]")
+
+          # Deduplicate by sha
+          seen, unique = set(), []
+          for c in commits:
+              if c["sha"] not in seen:
+                  seen.add(c["sha"])
+                  unique.append(c)
+
+          count   = len(unique)
+          authors = sorted({c["author"] for c in unique}) or ["—"]
+          messages = [f"`{c['sha']}` {c['msg']}" for c in unique] or ["—"]
+
+          timestamp = now.strftime("%Y-%m-%d %H:%M UTC")
+          lines = [
+              f"## {timestamp}",
+              f"- **Repo**: {repo}",
+              f"- **Commits in last {HOURS}h**: {count}",
+              f"- **Authors**: {', '.join(authors)}",
+              "- **Messages**:",
+          ]
+          for m in messages:
+              lines.append(f"  - {m}")
+          lines.append("")
+
+          log_path = "commit-log.md"
+          if not os.path.exists(log_path):
+              with open(log_path, "w") as f:
+                  f.write("# Commit Activity Log\n\n<!-- Auto-generated every 6 hours -->\n\n")
+
+          with open(log_path, "a") as f:
+              f.write("\n".join(lines) + "\n")
+
+          print(f"Logged {count} commit(s) for window ending {timestamp}")
+          PYEOF
+
+      - name: Commit and push updated log
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add commit-log.md
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "chore: update commit activity log $(date -u +%Y-%m-%d\ %H:%M\ UTC)"
+            git push
+          fi
