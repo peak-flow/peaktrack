@@ -1,0 +1,68 @@
+name: Commit Report (every 6 hours)
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Generate commit report
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          SINCE=$(date -u -d '6 hours ago' +%Y-%m-%dT%H:%M:%SZ)
+          NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          REPORT_FILE="commit_report.md"
+
+          # Fetch commits since 6 hours ago
+          COMMITS=$(gh api "repos/$REPO/commits?since=$SINCE&per_page=100" \
+            --jq '.[] | "- [`\(.sha[0:7])`] **\(.commit.author.name)** — \(.commit.message | split("\n")[0])"')
+
+          COUNT=$(echo "$COMMITS" | grep -c "^\- " || echo 0)
+          if [ -z "$COMMITS" ]; then COUNT=0; fi
+
+          # Build the new section
+          SECTION="## Check: $NOW\n\n**Repo:** \`$REPO\`  \n**Commits in last 6 hours:** $COUNT\n"
+          if [ "$COUNT" -gt 0 ]; then
+            SECTION="$SECTION\n$COMMITS\n"
+          else
+            SECTION="$SECTION\n_No commits in this window._\n"
+          fi
+          SECTION="$SECTION\n---\n"
+
+          # Create file with header if it doesn't exist
+          if [ ! -f "$REPORT_FILE" ]; then
+            echo "# Commit Report" > "$REPORT_FILE"
+            echo "" >> "$REPORT_FILE"
+            echo "_Auto-generated every 6 hours by GitHub Actions._" >> "$REPORT_FILE"
+            echo "" >> "$REPORT_FILE"
+            echo "---" >> "$REPORT_FILE"
+            echo "" >> "$REPORT_FILE"
+          fi
+
+          # Prepend new section after the header block (after first ---)
+          HEADER=$(awk '/^---/{print; exit} {print}' "$REPORT_FILE")
+          BODY=$(awk 'found{print} /^---/{found=1}' "$REPORT_FILE")
+          printf "%s\n\n%b\n%s" "$HEADER" "$SECTION" "$BODY" > "$REPORT_FILE"
+
+      - name: Commit and push report
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add commit_report.md
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "chore: update commit report $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            git push
+          fi
