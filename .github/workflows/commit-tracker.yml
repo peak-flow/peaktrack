@@ -1,0 +1,42 @@
+name: Commit Activity Tracker
+
+on:
+  schedule:
+    # Runs every 6 hours: 00:00, 06:00, 12:00, 18:00 UTC
+    - cron: "0 */6 * * *"
+  workflow_dispatch: # allow manual runs
+
+permissions:
+  contents: write
+
+jobs:
+  track:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Count commits and update log
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Change GITHUB_ORG to your org name, or leave blank to use your personal repos
+          GITHUB_ORG: peak-flow
+          LOOKBACK_HOURS: "6"
+          OUTPUT_FILE: commit_log.md
+        run: python scripts/track_commits.py
+
+      - name: Commit and push updated log
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add commit_log.md
+          # Only commit if there are changes
+          git diff --cached --quiet || git commit -m "chore: update commit activity log [skip ci]"
+          git push
