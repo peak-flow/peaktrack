@@ -1,0 +1,112 @@
+name: GitHub Commit Tracker
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'  # Every 6 hours: 00:00, 06:00, 12:00, 18:00 UTC
+  workflow_dispatch:        # Allow manual trigger from GitHub Actions UI
+
+jobs:
+  track-commits:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # Needed to push commit-tracker.md back to the repo
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Count commits in last 6 hours
+        env:
+          # Use COMMIT_TRACKER_TOKEN (PAT) for cross-repo access, or GITHUB_TOKEN for public repos
+          GH_TOKEN: ${{ secrets.COMMIT_TRACKER_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          python3 << 'EOF'
+          import subprocess
+          import sys
+          from datetime import datetime, timezone, timedelta
+
+          GITHUB_USER = "peak-flow"
+
+          since = (datetime.now(timezone.utc) - timedelta(hours=6)).strftime('%Y-%m-%dT%H:%M:%SZ')
+          report_time = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')
+
+          print(f"Checking commits since {since}", flush=True)
+
+          # Get list of repos sorted by recently updated
+          repos_proc = subprocess.run(
+              ['gh', 'api', f'users/{GITHUB_USER}/repos?per_page=100&sort=updated&direction=desc',
+               '--jq', '.[].full_name'],
+              capture_output=True, text=True
+          )
+          if repos_proc.returncode != 0:
+              print(f"Error fetching repos: {repos_proc.stderr}", file=sys.stderr)
+              sys.exit(1)
+
+          repos = [r for r in repos_proc.stdout.strip().split('\n') if r]
+          print(f"Found {len(repos)} repos to check", flush=True)
+
+          rows = []
+          total = 0
+
+          for repo in repos:
+              try:
+                  result = subprocess.run(
+                      ['gh', 'api',
+                       f'repos/{repo}/commits?since={since}&per_page=100',
+                       '--jq', 'length'],
+                      capture_output=True, text=True, timeout=30
+                  )
+                  count = int(result.stdout.strip() or '0')
+              except Exception as e:
+                  print(f"  Skipped {repo}: {e}", flush=True)
+                  count = 0
+
+              if count > 0:
+                  rows.append(f'| `{repo}` | {count} |')
+                  total += count
+                  print(f"  {repo}: {count} commits", flush=True)
+
+          # Build the new markdown entry
+          lines = [
+              f'## {report_time}',
+              '',
+              f'**{total} total commits across {len(rows)} repositor{"y" if len(rows) == 1 else "ies"}**',
+              '',
+          ]
+
+          if rows:
+              lines += ['| Repository | Commits |', '|---|---|']
+              lines += rows
+          else:
+              lines += ['*No commits in the last 6 hours.*']
+
+          lines += ['', '---', '']
+          new_entry = '\n'.join(lines) + '\n'
+
+          # Read existing file (if any) and prepend new entry below the header
+          tracker_path = 'commit-tracker.md'
+          try:
+              with open(tracker_path, 'r') as f:
+                  existing = f.read()
+              # Strip the top-level header so we can re-add it cleanly
+              if existing.startswith('# Commit Tracker'):
+                  existing = existing[len('# Commit Tracker'):].lstrip('\n')
+              content = '# Commit Tracker\n\n' + new_entry + existing
+          except FileNotFoundError:
+              content = '# Commit Tracker\n\n' + new_entry
+
+          with open(tracker_path, 'w') as f:
+              f.write(content)
+
+          print(f"\nDone — {total} commits recorded in {tracker_path}", flush=True)
+          EOF
+
+      - name: Commit and push tracker
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add commit-tracker.md
+          git diff --staged --quiet && echo "No changes to commit" || \
+            git commit -m "chore: commit tracker $(date -u +'%Y-%m-%d %H:%M UTC')" && git push
