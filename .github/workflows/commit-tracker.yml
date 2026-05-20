@@ -1,0 +1,81 @@
+name: Commit Tracker
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  track-commits:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Count commits across org repos (last 6 hours)
+        env:
+          GH_TOKEN: ${{ secrets.GH_ORG_PAT }}
+        run: |
+          ORG="peak-flow"
+          SINCE=$(date -u -d '6 hours ago' +%Y-%m-%dT%H:%M:%SZ)
+          NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          LOG_FILE="commit-log.md"
+
+          TOTAL=0
+          REPO_COUNT=0
+          REPO_LINES=""
+
+          # Fetch all org repos the token can see (public + private)
+          mapfile -t REPOS < <(
+            gh api "orgs/$ORG/repos?per_page=100&type=all" \
+              --paginate --jq '.[].name' 2>/dev/null
+          )
+
+          for REPO in "${REPOS[@]}"; do
+            [ -z "$REPO" ] && continue
+            COUNT=$(gh api \
+              "repos/$ORG/$REPO/commits?since=$SINCE&per_page=100" \
+              --paginate --jq '.[].sha' 2>/dev/null | wc -l | tr -d ' ')
+            COUNT=${COUNT:-0}
+            if [ "$COUNT" -gt 0 ] 2>/dev/null; then
+              REPO_LINES="${REPO_LINES}- **${REPO}**: ${COUNT} commit(s)\n"
+              TOTAL=$((TOTAL + COUNT))
+              REPO_COUNT=$((REPO_COUNT + 1))
+            fi
+          done
+
+          # Build new entry (prepend so newest is at top)
+          {
+            echo "## $(date -u +'%Y-%m-%d %H:%M UTC')"
+            echo ""
+            echo "**Window:** \`${SINCE}\` → \`${NOW}\`"
+            echo ""
+            if [ "$REPO_COUNT" -eq 0 ]; then
+              echo "_No commits in this window._"
+            else
+              printf "%b" "$REPO_LINES"
+              echo ""
+              echo "**Total:** ${TOTAL} commit(s) across ${REPO_COUNT} repo(s)"
+            fi
+            echo ""
+            echo "---"
+            echo ""
+            # Append existing content if file exists
+            if [ -f "$LOG_FILE" ]; then
+              cat "$LOG_FILE"
+            fi
+          } > "${LOG_FILE}.tmp"
+
+          mv "${LOG_FILE}.tmp" "$LOG_FILE"
+
+      - name: Commit and push log
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add commit-log.md
+          git diff --staged --quiet || \
+            git commit -m "chore: commit log $(date -u +'%Y-%m-%d %H:%M UTC')" && \
+            git push
