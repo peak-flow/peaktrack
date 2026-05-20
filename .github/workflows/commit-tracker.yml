@@ -1,0 +1,99 @@
+name: Commit Activity Tracker
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      hours_back:
+        description: 'Hours to look back (default: 6)'
+        required: false
+        default: '6'
+
+jobs:
+  track:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate commit report
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HOURS_BACK: ${{ inputs.hours_back || '6' }}
+        run: |
+          SINCE=$(date -u -d "${HOURS_BACK} hours ago" '+%Y-%m-%dT%H:%M:%SZ')
+          NOW=$(date -u '+%Y-%m-%d %H:%M UTC')
+          ORG="${GITHUB_REPOSITORY_OWNER}"
+
+          echo "Checking commits since $SINCE in org/user: $ORG"
+
+          mkdir -p commit-reports
+          REPORT_FILE="commit-reports/$(date -u '+%Y-%m-%d_%H-%M').md"
+
+          ROWS=""
+          TOTAL=0
+          REPO_COUNT=0
+
+          # Try org repos first, fall back to user repos
+          REPO_LIST=$(gh api "/orgs/${ORG}/repos?per_page=100" --paginate \
+            -q '.[].full_name' 2>/dev/null)
+          if [ -z "$REPO_LIST" ]; then
+            REPO_LIST=$(gh api "/users/${ORG}/repos?per_page=100" --paginate \
+              -q '.[].full_name' 2>/dev/null)
+          fi
+
+          while IFS= read -r REPO; do
+            [ -z "$REPO" ] && continue
+
+            COUNT=$(gh api "/repos/${REPO}/commits?since=${SINCE}&per_page=100" \
+              --paginate -q '.[].sha' 2>/dev/null | grep -c . || true)
+
+            if [ "$COUNT" -gt 0 ]; then
+              ROWS="${ROWS}| \`${REPO}\` | ${COUNT} |\n"
+              TOTAL=$((TOTAL + COUNT))
+              REPO_COUNT=$((REPO_COUNT + 1))
+            fi
+          done <<< "$REPO_LIST"
+
+          {
+            echo "# Commit Activity Report"
+            echo ""
+            echo "> **Period:** Last ${HOURS_BACK} hours (since \`${SINCE}\`)"
+            echo "> **Generated:** ${NOW}"
+            echo ""
+
+            if [ "$TOTAL" -eq 0 ]; then
+              echo "_No commits found in the last ${HOURS_BACK} hours._"
+            else
+              echo "## Repositories with Activity"
+              echo ""
+              echo "| Repository | Commits |"
+              echo "|:-----------|--------:|"
+              printf "%b" "$ROWS"
+              echo ""
+              echo "---"
+              echo ""
+              REPO_WORD="repositories"
+              [ "$REPO_COUNT" -eq 1 ] && REPO_WORD="repository"
+              echo "**Total:** ${TOTAL} commits across ${REPO_COUNT} ${REPO_WORD}"
+            fi
+          } > "$REPORT_FILE"
+
+          echo ""
+          echo "=== Report Preview ==="
+          cat "$REPORT_FILE"
+
+      - name: Commit and push report
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add commit-reports/
+          if git diff --staged --quiet; then
+            echo "No changes to commit (report already exists for this timestamp)"
+          else
+            git commit -m "chore: commit activity report $(date -u '+%Y-%m-%d %H:%M UTC')"
+            git push
+          fi
