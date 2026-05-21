@@ -1,0 +1,61 @@
+name: Commit Tracker
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'   # every 6 hours
+  workflow_dispatch:          # allow manual runs
+
+permissions:
+  contents: write
+
+jobs:
+  track-commits:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Count and log commits from the last 6 hours
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          REPO="peak-flow/peaktrack"
+          SINCE=$(date -u -d '6 hours ago' +%Y-%m-%dT%H:%M:%SZ)
+          NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          CHECKED_AT=$(date -u +"%Y-%m-%d %H:%M UTC")
+
+          # Fetch commits since 6 hours ago (up to 100)
+          COMMITS_JSON=$(gh api \
+            "repos/${REPO}/commits?since=${SINCE}&per_page=100" \
+            --jq '[.[] | {sha: .sha[0:7], author: (.commit.author.name), message: (.commit.message | split("\n")[0]), timestamp: .commit.author.date}]')
+
+          COUNT=$(echo "$COMMITS_JSON" | jq 'length')
+
+          # Build markdown entry
+          {
+            echo ""
+            echo "## $CHECKED_AT"
+            echo ""
+            echo "**Repository:** \`$REPO\`  "
+            echo "**Window:** last 6 hours (since \`$SINCE\`)  "
+            echo "**Commits:** $COUNT"
+            echo ""
+            if [ "$COUNT" -gt 0 ]; then
+              echo "| SHA | Author | Message | Timestamp |"
+              echo "|-----|--------|---------|-----------|"
+              echo "$COMMITS_JSON" | jq -r '.[] | "| `\(.sha)` | \(.author) | \(.message) | \(.timestamp) |"'
+            else
+              echo "_No commits in this window._"
+            fi
+            echo ""
+            echo "---"
+          } >> commit-log.md
+
+      - name: Commit updated log
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add commit-log.md
+          git diff --cached --quiet || git commit -m "chore: commit tracker log $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          git push
