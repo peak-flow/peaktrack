@@ -1,0 +1,134 @@
+name: Commit Tracker (6h)
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'   # runs at 00:00, 06:00, 12:00, 18:00 UTC
+  workflow_dispatch:          # allow manual run from GitHub UI
+
+jobs:
+  track-commits:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Count commits across all repos (last 6 hours)
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          set -euo pipefail
+
+          SINCE=$(date -u -d '6 hours ago' '+%Y-%m-%dT%H:%M:%SZ')
+          NOW=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+          OWNER="peak-flow"
+          LOG_FILE="commit-log.md"
+
+          echo "Checking commits since $SINCE"
+
+          # Fetch all repos (handles pagination)
+          ALL_REPOS=()
+          PAGE=1
+          while true; do
+            RESP=$(curl -s -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/user/repos?type=all&per_page=100&page=$PAGE")
+            NAMES=$(echo "$RESP" | jq -r '.[].full_name // empty')
+            [[ -z "$NAMES" ]] && break
+            while IFS= read -r name; do
+              ALL_REPOS+=("$name")
+            done <<< "$NAMES"
+            COUNT=$(echo "$RESP" | jq 'length')
+            [[ "$COUNT" -lt 100 ]] && break
+            PAGE=$((PAGE + 1))
+          done
+
+          echo "Found ${#ALL_REPOS[@]} repos"
+
+          # Build results
+          TOTAL=0
+          ACTIVE_REPOS=()
+          DETAILS=()
+
+          for FULL_NAME in "${ALL_REPOS[@]}"; do
+            REPO_OWNER="${FULL_NAME%%/*}"
+            REPO_NAME="${FULL_NAME##*/}"
+
+            # Get commits since SINCE for this repo
+            COMMIT_RESP=$(curl -s -o /dev/null -w "%{http_code}" \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/$FULL_NAME/commits?since=$SINCE&per_page=1")
+
+            # Skip repos we can't read (403/404) or that errored
+            [[ "$COMMIT_RESP" != "200" ]] && continue
+
+            # Count commits (get all pages)
+            COMMIT_COUNT=0
+            C_PAGE=1
+            while true; do
+              COMMITS=$(curl -s \
+                -H "Authorization: Bearer $GH_TOKEN" \
+                -H "Accept: application/vnd.github+json" \
+                "https://api.github.com/repos/$FULL_NAME/commits?since=$SINCE&per_page=100&page=$C_PAGE")
+              C=$(echo "$COMMITS" | jq 'if type=="array" then length else 0 end')
+              COMMIT_COUNT=$((COMMIT_COUNT + C))
+              [[ "$C" -lt 100 ]] && break
+              C_PAGE=$((C_PAGE + 1))
+            done
+
+            if [[ "$COMMIT_COUNT" -gt 0 ]]; then
+              TOTAL=$((TOTAL + COMMIT_COUNT))
+              ACTIVE_REPOS+=("$FULL_NAME")
+              DETAILS+=("| \`$FULL_NAME\` | $COMMIT_COUNT |")
+            fi
+          done
+
+          # Write / append to commit-log.md
+          if [ ! -f "$LOG_FILE" ]; then
+            cat > "$LOG_FILE" <<'HEADER'
+          # GitHub Commit Activity Log
+
+          Automatically updated every 6 hours by the [commit-tracker workflow](.github/workflows/commit-tracker.yml).
+
+          ---
+
+          HEADER
+          fi
+
+          {
+            echo ""
+            echo "## $(date -u '+%Y-%m-%d %H:%M UTC')  —  window: \`$SINCE\` → \`$NOW\`"
+            echo ""
+            if [[ "$TOTAL" -eq 0 ]]; then
+              echo "_No commits found across any repo in this window._"
+            else
+              echo "**Total commits:** $TOTAL across **${#ACTIVE_REPOS[@]}** repo(s)"
+              echo ""
+              echo "| Repository | Commits |"
+              echo "|------------|---------|"
+              for LINE in "${DETAILS[@]}"; do
+                echo "$LINE"
+              done
+            fi
+            echo ""
+            echo "---"
+          } >> "$LOG_FILE"
+
+          echo "Done. Total=$TOTAL repos-with-activity=${#ACTIVE_REPOS[@]}"
+
+      - name: Commit and push log
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add commit-log.md
+          if git diff --cached --quiet; then
+            echo "No changes to commit (no new activity)"
+          else
+            git commit -m "chore: commit activity log $(date -u '+%Y-%m-%d %H:%M UTC')"
+            git push
+          fi
