@@ -1,0 +1,101 @@
+name: Commit Tracker
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'   # every 6 hours: 00:00, 06:00, 12:00, 18:00 UTC
+  workflow_dispatch:          # allow manual trigger
+
+permissions:
+  contents: write
+
+jobs:
+  track-commits:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Gather commits from last 6 hours and update log
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -e
+
+          SINCE=$(date -u -d '6 hours ago' '+%Y-%m-%dT%H:%M:%SZ')
+          NOW=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+          NOW_HUMAN=$(date -u '+%Y-%m-%d %H:%M UTC')
+
+          echo "Checking commits since $SINCE in $REPO"
+
+          # Fetch commits via GitHub API
+          RESPONSE=$(curl -s \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$REPO/commits?since=$SINCE&per_page=100")
+
+          COUNT=$(echo "$RESPONSE" | python3 -c "import sys,json; data=json.load(sys.stdin); print(len(data))")
+
+          echo "Found $COUNT commits"
+
+          # Build the markdown entry
+          ENTRY="## $NOW_HUMAN\n\n"
+          ENTRY+="**Repository:** \`$REPO\`  \n"
+          ENTRY+="**Period:** last 6 hours (since $SINCE)  \n"
+          ENTRY+="**Commit count:** $COUNT\n"
+
+          if [ "$COUNT" -gt 0 ]; then
+            ENTRY+="\n### Commits\n\n"
+            ENTRY+="| SHA | Author | Message |\n"
+            ENTRY+="|-----|--------|---------|\n"
+
+            while IFS= read -r line; do
+              ENTRY+="$line\n"
+            done < <(echo "$RESPONSE" | python3 - <<'PYEOF'
+import sys, json
+data = json.load(sys.stdin)
+for c in data:
+    sha = c.get("sha","")[:7]
+    author = (c.get("commit",{}).get("author",{}) or {}).get("name","unknown")
+    msg = (c.get("commit",{}).get("message","") or "").split("\n")[0][:80]
+    # escape pipe chars
+    author = author.replace("|","\\|")
+    msg = msg.replace("|","\\|")
+    print(f"| `{sha}` | {author} | {msg} |")
+PYEOF
+            )
+          fi
+
+          ENTRY+="\n---\n"
+
+          # Prepend new entry to commit_log.md
+          LOG_FILE="commit_log.md"
+
+          if [ ! -f "$LOG_FILE" ]; then
+            printf "# Commit Log\n\nAutomatically updated every 6 hours by GitHub Actions.\n\n---\n" > "$LOG_FILE"
+          fi
+
+          # Insert after the header block (after first "---")
+          HEADER=$(awk '/^---$/{found=1} found{next} {print}' "$LOG_FILE")
+          REST=$(awk '/^---$/{found=1; next} found{print}' "$LOG_FILE")
+
+          {
+            printf "%s\n\n---\n\n" "$HEADER"
+            printf "%b\n" "$ENTRY"
+            printf "%s" "$REST"
+          } > "${LOG_FILE}.tmp" && mv "${LOG_FILE}.tmp" "$LOG_FILE"
+
+      - name: Commit and push updated log
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add commit_log.md
+          if git diff --cached --quiet; then
+            echo "Nothing to commit — no changes to the log."
+          else
+            git commit -m "chore: update commit log $(date -u '+%Y-%m-%d %H:%M UTC')"
+            git push
+          fi
