@@ -1,0 +1,111 @@
+name: Commit Tracker
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  track-commits:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Count commits in last 6 hours
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          SINCE=$(date -u -d '6 hours ago' +%Y-%m-%dT%H:%M:%SZ)
+          NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          DATE_LABEL=$(date -u +"%Y-%m-%d %H:%M UTC")
+
+          # Fetch commits from last 6 hours for this repo
+          COMMITS=$(curl -s -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$REPO/commits?since=$SINCE&per_page=100")
+
+          COUNT=$(echo "$COMMITS" | python3 -c "import json,sys; data=json.load(sys.stdin); print(len(data))")
+          DETAILS=$(echo "$COMMITS" | python3 -c "
+          import json, sys
+          data = json.load(sys.stdin)
+          for c in data:
+              sha = c['sha'][:7]
+              msg = c['commit']['message'].splitlines()[0][:80]
+              author = c['commit']['author']['name']
+              ts = c['commit']['author']['date']
+              print(f'- \`{sha}\` {ts[:16].replace(\"T\",\" \")} **{author}**: {msg}')
+          ")
+
+          # Append entry to commit-tracker.md
+          FILE="commit-tracker.md"
+          if [ ! -f "$FILE" ]; then
+            echo "# Commit Tracker" > "$FILE"
+            echo "" >> "$FILE"
+            echo "Auto-updated every 6 hours via GitHub Actions." >> "$FILE"
+            echo "" >> "$FILE"
+            echo "---" >> "$FILE"
+            echo "" >> "$FILE"
+          fi
+
+          {
+            echo "## $DATE_LABEL"
+            echo ""
+            echo "**Repository:** \`$REPO\`  "
+            echo "**Window:** $SINCE → $NOW  "
+            echo "**Total commits:** $COUNT"
+            echo ""
+            if [ "$COUNT" -gt 0 ]; then
+              echo "$DETAILS"
+            else
+              echo "_No commits in this window._"
+            fi
+            echo ""
+            echo "---"
+            echo ""
+          } >> "$FILE"
+
+          # Prepend new entries so latest is at top
+          # Read existing content after the header block
+          python3 - "$FILE" <<'PYEOF'
+          import sys, re
+          path = sys.argv[1]
+          with open(path) as f:
+              content = f.read()
+
+          # Split on the header separator
+          header_end = content.find('---\n\n', content.find('---\n\n')) + 5
+          header = content[:header_end]
+          rest = content[header_end:]
+
+          # Split rest into entries
+          entries = re.split(r'(?=## \d{4}-\d{2}-\d{2})', rest)
+          entries = [e for e in entries if e.strip()]
+
+          # Keep latest 120 entries (~30 days at 4/day)
+          entries = entries[-120:]
+
+          with open(path, 'w') as f:
+              f.write(header)
+              for e in reversed(entries):
+                  f.write(e)
+          PYEOF
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add commit-tracker.md
+          if git diff --cached --quiet; then
+            echo "Nothing to commit"
+          else
+            git commit -m "chore: update commit tracker $(date -u +'%Y-%m-%d %H:%M UTC')"
+            git push origin master
+          fi
