@@ -1,0 +1,62 @@
+name: Commit Tracker
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'   # every 6 hours
+  workflow_dispatch:          # allow manual trigger
+
+jobs:
+  log-commits:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0      # full history so git log --since works
+
+      - name: Count and log commits from last 6 hours
+        run: |
+          NOW_HUMAN="$(date -u +"%Y-%m-%d %H:%M UTC")"
+          SINCE_HUMAN="$(date -u -d '6 hours ago' +"%Y-%m-%d %H:%M UTC")"
+          SINCE_ISO="$(date -u -d '6 hours ago' +"%Y-%m-%dT%H:%M:%SZ")"
+
+          # Initialise log file if missing
+          if [ ! -f commit-log.md ]; then
+            printf '# GitHub Commit Log — peak-flow/peaktrack\n\nAuto-generated every 6 hours.\n\n' > commit-log.md
+          fi
+
+          # All commits across all branches in the last 6 hours
+          COMMITS=$(git log --all --since="$SINCE_ISO" \
+            --pretty=format:'- **%h** %s _(author: %an, branch: %D, at %ai)_' \
+            2>/dev/null || true)
+
+          COUNT=0
+          if [ -n "$COMMITS" ]; then
+            COUNT=$(echo "$COMMITS" | wc -l)
+          fi
+
+          {
+            printf '\n---\n\n'
+            printf '## %s\n\n' "$NOW_HUMAN"
+            printf '**Period checked:** %s → %s\n\n' "$SINCE_HUMAN" "$NOW_HUMAN"
+            printf '**Total commits:** %d\n\n' "$COUNT"
+            if [ "$COUNT" -gt 0 ]; then
+              printf '### Commits\n\n'
+              echo "$COMMITS"
+              printf '\n'
+            else
+              printf '_No commits in this window._\n'
+            fi
+          } >> commit-log.md
+
+          echo "Logged $COUNT commits."
+
+      - name: Commit updated log
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add commit-log.md
+          git diff --cached --quiet || git commit -m "chore: commit log update $(date -u +"%Y-%m-%d %H:%M UTC")"
+          git push
