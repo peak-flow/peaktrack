@@ -1,0 +1,78 @@
+name: Track Commit Activity
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'   # every 6 hours
+  workflow_dispatch:          # allow manual runs
+
+permissions:
+  contents: write
+
+jobs:
+  track-commits:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Count commits in last 6 hours
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ORG: peak-flow
+        run: |
+          SINCE=$(date -u -d '6 hours ago' '+%Y-%m-%dT%H:%M:%SZ')
+          NOW=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+          REPORT_FILE="commit-activity.md"
+
+          echo "Fetching repos for org: $ORG since $SINCE"
+
+          # Get all repos in the org (up to 100)
+          REPOS=$(curl -s -H "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/orgs/$ORG/repos?per_page=100&sort=updated" \
+            | jq -r '.[].full_name')
+
+          TOTAL=0
+          TABLE_ROWS=""
+
+          for REPO in $REPOS; do
+            COUNT=$(curl -s -H "Authorization: Bearer $GH_TOKEN" \
+              "https://api.github.com/repos/$REPO/commits?since=$SINCE&per_page=100" \
+              | jq 'if type == "array" then length else 0 end')
+            if [ "$COUNT" -gt 0 ] 2>/dev/null; then
+              TOTAL=$((TOTAL + COUNT))
+              TABLE_ROWS="${TABLE_ROWS}| \`$REPO\` | $COUNT |\n"
+            fi
+          done
+
+          # Append new entry to the report
+          TIMESTAMP=$(date -u '+%Y-%m-%d %H:%M UTC')
+          {
+            echo ""
+            echo "## $TIMESTAMP"
+            echo ""
+            echo "**Window:** $SINCE → $NOW"
+            echo ""
+            echo "**Total commits:** $TOTAL"
+            echo ""
+            if [ -n "$TABLE_ROWS" ]; then
+              echo "| Repository | Commits |"
+              echo "|------------|---------|"
+              printf "$TABLE_ROWS"
+            else
+              echo "_No commits in this window._"
+            fi
+            echo ""
+            echo "---"
+          } >> "$REPORT_FILE"
+
+          echo "Done. Total commits: $TOTAL"
+
+      - name: Commit report
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add commit-activity.md
+          git diff --cached --quiet || git commit -m "chore: commit activity report $(date -u '+%Y-%m-%d %H:%M UTC')"
+          git push
