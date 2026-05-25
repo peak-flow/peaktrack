@@ -1,0 +1,63 @@
+name: 6-Hour Commit Log
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'  # every 6 hours at :00
+  workflow_dispatch:       # allow manual trigger
+
+permissions:
+  contents: write
+
+jobs:
+  log-commits:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check commits in last 6 hours
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          SINCE=$(date -u -d '6 hours ago' '+%Y-%m-%dT%H:%M:%SZ')
+          NOW=$(date -u '+%Y-%m-%d %H:%M UTC')
+
+          RESPONSE=$(curl -s \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$REPO/commits?since=$SINCE&per_page=100")
+
+          COUNT=$(echo "$RESPONSE" | jq '. | length')
+
+          {
+            echo "## $NOW"
+            echo ""
+            echo "**Repository:** \`$REPO\`"
+            echo ""
+
+            if [ "$COUNT" -eq 0 ]; then
+              echo "No commits in the last 6 hours."
+            else
+              echo "**$COUNT commit(s)** in the last 6 hours."
+              echo ""
+              echo "| SHA | Author | Message |"
+              echo "|-----|--------|---------|"
+              echo "$RESPONSE" | jq -r \
+                '.[] | "| [`\(.sha[:7])`](\(.html_url)) | \(.commit.author.name) | \(.commit.message | split("\n")[0] | gsub("|"; "\\|")) |"'
+            fi
+
+            echo ""
+            echo "---"
+            echo ""
+          } >> commit_log.md
+
+      - name: Commit and push log update
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add commit_log.md
+          git diff --cached --quiet || git commit -m "chore: commit log update $(date -u '+%Y-%m-%d %H:%M UTC')"
+          git push
