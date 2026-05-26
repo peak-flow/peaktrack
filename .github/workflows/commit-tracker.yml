@@ -1,0 +1,94 @@
+name: Commit Tracker
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'   # every 6 hours
+  workflow_dispatch:          # allow manual runs
+
+permissions:
+  contents: write
+
+jobs:
+  track-commits:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - name: Count commits in last 6 hours and update log
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ORG: peak-flow
+        run: |
+          SINCE=$(date -u -d '6 hours ago' '+%Y-%m-%dT%H:%M:%SZ')
+          NOW=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+          NOW_PRETTY=$(date -u '+%Y-%m-%d %H:%M UTC')
+
+          echo "Checking commits since $SINCE"
+
+          # Fetch all non-archived repos in the org (paginated)
+          REPOS=$(gh api "orgs/$ORG/repos?per_page=100&type=all" --paginate \
+            --jq '.[] | select(.archived == false) | .name' 2>/dev/null || \
+            gh api "users/$ORG/repos?per_page=100" --paginate \
+            --jq '.[] | select(.archived == false) | .name')
+
+          # Build markdown output for this run
+          {
+            echo "## $NOW_PRETTY"
+            echo ""
+            echo "| Repository | Commits (last 6 h) |"
+            echo "|---|---|"
+          } > /tmp/run_block.md
+
+          TOTAL=0
+          while IFS= read -r REPO; do
+            COUNT=$(gh api "repos/$ORG/$REPO/commits?since=$SINCE&per_page=100" \
+              --paginate --jq 'length' 2>/dev/null | awk '{s+=$1} END {print s+0}')
+            if [ "$COUNT" -gt 0 ]; then
+              echo "| $REPO | $COUNT |" >> /tmp/run_block.md
+              TOTAL=$((TOTAL + COUNT))
+            fi
+          done <<< "$REPOS"
+
+          echo "| **Total** | **$TOTAL** |" >> /tmp/run_block.md
+          echo "" >> /tmp/run_block.md
+          echo "---" >> /tmp/run_block.md
+          echo "" >> /tmp/run_block.md
+
+          # Prepend new entry to the log file
+          LOG=docs/commit-log.md
+          mkdir -p docs
+
+          if [ ! -f "$LOG" ]; then
+            cat > "$LOG" <<'HEADER'
+# Commit Activity Log
+
+Automatically updated every 6 hours by the [Commit Tracker](.github/workflows/commit-tracker.yml) workflow.
+Each entry shows repositories that had at least one commit in the preceding 6-hour window.
+
+---
+
+HEADER
+          fi
+
+          # Insert new block after the header (line 6 onward)
+          HEAD=$(head -6 "$LOG")
+          TAIL=$(tail -n +7 "$LOG")
+          printf '%s\n\n%s\n%s\n' "$HEAD" "$(cat /tmp/run_block.md)" "$TAIL" > "$LOG"
+
+          echo "Log updated — $TOTAL commits across active repos"
+
+      - name: Commit and push log
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/commit-log.md
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "chore: update commit activity log $(date -u '+%Y-%m-%d %H:%M UTC')"
+            git push origin master
+          fi
