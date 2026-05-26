@@ -1,0 +1,43 @@
+name: Commit Activity Tracker
+
+on:
+  schedule:
+    # Every 6 hours: midnight, 6am, noon, 6pm UTC
+    - cron: "0 0,6,12,18 * * *"
+  workflow_dispatch: # allow manual trigger
+
+permissions:
+  contents: write  # needed to commit the report back
+
+jobs:
+  track-commits:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Generate commit report
+        env:
+          # Use a PAT with repo + read:org scopes to see all your repos.
+          # Add it as a repository secret named GITHUB_PAT.
+          # Falls back to GITHUB_TOKEN (only sees this repo).
+          GITHUB_PAT: ${{ secrets.GITHUB_PAT }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          chmod +x scripts/generate_commit_report.sh
+          bash scripts/generate_commit_report.sh
+
+      - name: Commit and push report
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add commit-reports/
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "chore: commit activity report $(date -u +"%Y-%m-%d %H:%M UTC")"
+            git push origin HEAD
+          fi
