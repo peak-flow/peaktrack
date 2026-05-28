@@ -1,0 +1,132 @@
+name: Commit Tracker
+
+on:
+  schedule:
+    # Runs every 6 hours: midnight, 6am, noon, 6pm UTC
+    - cron: '0 0,6,12,18 * * *'
+  workflow_dispatch:  # allow manual runs
+
+jobs:
+  track-commits:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check commits in last 6 hours and update log
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_OWNER: peak-flow
+        run: |
+          set -euo pipefail
+
+          SINCE=$(date -u -d '6 hours ago' '+%Y-%m-%dT%H:%M:%SZ')
+          NOW=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+          NOW_DISPLAY=$(date -u '+%Y-%m-%d %H:%M UTC')
+
+          echo "Checking commits since $SINCE"
+
+          # Fetch all repos (public + private) for the owner, paginated
+          repos=()
+          page=1
+          while true; do
+            batch=$(gh api "orgs/${GITHUB_OWNER}/repos?per_page=100&page=${page}&type=all" \
+              --jq '.[].full_name' 2>/dev/null || \
+              gh api "users/${GITHUB_OWNER}/repos?per_page=100&page=${page}&type=all" \
+              --jq '.[].full_name')
+            [ -z "$batch" ] && break
+            while IFS= read -r r; do repos+=("$r"); done <<< "$batch"
+            count=$(echo "$batch" | wc -l)
+            [ "$count" -lt 100 ] && break
+            ((page++))
+          done
+
+          echo "Found ${#repos[@]} repos to check"
+
+          # Collect results
+          declare -A repo_commit_count
+          declare -A repo_commit_details
+          total=0
+
+          for repo in "${repos[@]}"; do
+            owner="${repo%%/*}"
+            name="${repo##*/}"
+            commits=$(gh api \
+              "repos/${repo}/commits?since=${SINCE}&per_page=100" \
+              --jq '[.[] | {sha: .sha[0:7], message: (.commit.message | split("\n")[0]), author: .commit.author.name, date: .commit.author.date}]' \
+              2>/dev/null || echo "[]")
+
+            count=$(echo "$commits" | jq 'length')
+            if [ "$count" -gt 0 ]; then
+              repo_commit_count["$repo"]=$count
+              repo_commit_details["$repo"]="$commits"
+              total=$((total + count))
+            fi
+          done
+
+          # Build markdown entry
+          LOG_FILE="commit-log.md"
+          ENTRY=""
+
+          ENTRY+="## $(date -u '+%Y-%m-%d %H:%M UTC')"$'\n'
+          ENTRY+=""$'\n'
+
+          if [ "$total" -eq 0 ]; then
+            ENTRY+="**No commits** in the last 6 hours across all ${#repos[@]} repos."$'\n'
+          else
+            ENTRY+="**${total} commit(s)** across **${#repo_commit_count[@]} repo(s)** in the last 6 hours (since \`${SINCE}\`)."$'\n'
+            ENTRY+=""$'\n'
+            for repo in "${!repo_commit_count[@]}"; do
+              count="${repo_commit_count[$repo]}"
+              details="${repo_commit_details[$repo]}"
+              ENTRY+="### \`${repo}\` — ${count} commit(s)"$'\n'
+              ENTRY+=""$'\n'
+              # Print each commit as a list item
+              while IFS= read -r line; do
+                sha=$(echo "$line" | jq -r '.sha')
+                msg=$(echo "$line" | jq -r '.message')
+                author=$(echo "$line" | jq -r '.author')
+                date=$(echo "$line" | jq -r '.date')
+                ENTRY+="- \`${sha}\` **${msg}** — ${author} @ ${date}"$'\n'
+              done < <(echo "$details" | jq -c '.[]')
+              ENTRY+=""$'\n'
+            done
+          fi
+
+          ENTRY+=""$'\n'
+          ENTRY+="---"$'\n'
+          ENTRY+=""$'\n'
+
+          # Prepend to log file (newest first)
+          if [ -f "$LOG_FILE" ]; then
+            header=$(head -n 3 "$LOG_FILE")  # keep the top-level heading
+            body=$(tail -n +4 "$LOG_FILE")
+            printf '%s\n\n%s\n\n%s\n' "$header" "$ENTRY" "$body" > "${LOG_FILE}.tmp"
+            mv "${LOG_FILE}.tmp" "$LOG_FILE"
+          else
+            {
+              echo "# GitHub Commit Log"
+              echo ""
+              echo "_Auto-updated every 6 hours by GitHub Actions. Newest entries first._"
+              echo ""
+              echo "$ENTRY"
+            } > "$LOG_FILE"
+          fi
+
+          echo "Log updated."
+          cat "$LOG_FILE" | head -60
+
+      - name: Commit and push log
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add commit-log.md
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "chore: update commit log $(date -u '+%Y-%m-%d %H:%M UTC')"
+            git push
+          fi
