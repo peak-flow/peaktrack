@@ -1,0 +1,54 @@
+name: Commit Log (every 6 hours)
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  log-commits:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Count and log commits from last 6 hours
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          SINCE=$(date -u -d '6 hours ago' +"%Y-%m-%dT%H:%M:%SZ")
+          NOW=$(date -u +"%Y-%m-%d %H:%M")
+          REPO="peak-flow/peaktrack"
+
+          # Fetch commits since 6 hours ago
+          COMMITS=$(gh api \
+            "repos/${REPO}/commits?since=${SINCE}&per_page=100" \
+            --jq '.[] | "  - \(.sha[0:7]): \(.commit.message | split("\n")[0]) — \(.commit.author.name)"')
+
+          COUNT=$(echo "$COMMITS" | grep -c '  - ' || true)
+          [ -z "$COMMITS" ] && COUNT=0
+
+          # Build the new log entry
+          {
+            echo ""
+            echo "## ${NOW} UTC"
+            echo "- **${REPO}**: ${COUNT} commits"
+            if [ -n "$COMMITS" ]; then
+              echo "$COMMITS"
+            fi
+          } >> commit_log.md
+
+          cat commit_log.md
+
+      - name: Commit updated log
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add commit_log.md
+          git diff --staged --quiet || git commit -m "chore: update commit log $(date -u +'%Y-%m-%d %H:%M UTC')"
+          git push
