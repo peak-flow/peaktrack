@@ -1,0 +1,75 @@
+name: Commit Activity Log
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+
+jobs:
+  log-commits:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log recent commits
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 << 'EOF'
+          import requests
+          import datetime
+          import os
+
+          now = datetime.datetime.utcnow()
+          since = (now - datetime.timedelta(hours=6)).strftime('%Y-%m-%dT%H:%M:%SZ')
+
+          headers = {
+              'Authorization': f'token {os.environ["GITHUB_TOKEN"]}',
+              'Accept': 'application/vnd.github.v3+json',
+          }
+
+          repos = ['peak-flow/peaktrack']
+
+          lines = [f'\n## {now.strftime("%Y-%m-%d %H:%M")} UTC\n']
+
+          for repo in repos:
+              owner, name = repo.split('/')
+              url = f'https://api.github.com/repos/{owner}/{name}/commits'
+              params = {'since': since, 'per_page': 100}
+              resp = requests.get(url, headers=headers, params=params)
+              commits = resp.json() if resp.ok else []
+
+              lines.append(f'- **Repository:** `{repo}`')
+              lines.append(f'- **Commits in last 6 hours:** {len(commits)}')
+              if commits:
+                  lines.append('- **Commits:**')
+                  for c in commits:
+                      sha = c['sha'][:7]
+                      author = c['commit']['author']['name']
+                      message = c['commit']['message'].split('\n')[0]
+                      date = c['commit']['author']['date']
+                      lines.append(f'  - `{sha}` — {author}: {message} ({date})')
+              lines.append('')
+
+          entry = '\n'.join(lines)
+
+          log_path = 'commit-log.md'
+          if not os.path.exists(log_path):
+              with open(log_path, 'w') as f:
+                  f.write('# Commit Activity Log\n')
+
+          with open(log_path, 'a') as f:
+              f.write(entry)
+
+          print(entry)
+          EOF
+
+      - name: Commit log update
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add commit-log.md
+          git diff --cached --quiet || git commit -m "chore: update commit activity log [skip ci]"
+          git push
