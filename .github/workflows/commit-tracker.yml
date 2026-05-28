@@ -1,0 +1,95 @@
+name: 6-Hour Commit Tracker
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'  # Runs at 00:00, 06:00, 12:00, 18:00 UTC
+  workflow_dispatch:          # Allows manual trigger from GitHub UI
+
+env:
+  # Space-separated list of repos to track (format: owner/repo)
+  # For private repos outside this one, add a GH_PAT secret with repo read permissions
+  TRACKED_REPOS: "peak-flow/peaktrack"
+
+jobs:
+  track-commits:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Count commits in last 6 hours
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT != '' && secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+        run: |
+          SINCE=$(date -u -d "6 hours ago" +"%Y-%m-%dT%H:%M:%SZ")
+          NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          LABEL=$(date -u +"%Y-%m-%d %H:%M UTC")
+
+          count_commits() {
+            local REPO=$1
+            local PAGE=1
+            local TOTAL=0
+            while true; do
+              RESPONSE=$(curl -sf -H "Authorization: Bearer $GH_TOKEN" \
+                "https://api.github.com/repos/$REPO/commits?since=$SINCE&per_page=100&page=$PAGE" 2>/dev/null || echo "[]")
+              BATCH=$(echo "$RESPONSE" | jq 'if type == "array" then length else 0 end')
+              TOTAL=$((TOTAL + BATCH))
+              [ "$BATCH" -lt 100 ] && break
+              PAGE=$((PAGE + 1))
+            done
+            echo "$TOTAL"
+          }
+
+          {
+            echo "## $LABEL"
+            echo ""
+            echo "**Window:** \`$SINCE\` → \`$NOW\`"
+            echo ""
+            echo "| Repository | Commits |"
+            echo "|---|---:|"
+          } > /tmp/entry.md
+
+          GRAND_TOTAL=0
+          for REPO in $TRACKED_REPOS; do
+            N=$(count_commits "$REPO")
+            echo "| \`$REPO\` | $N |" >> /tmp/entry.md
+            GRAND_TOTAL=$((GRAND_TOTAL + N))
+          done
+
+          {
+            echo ""
+            echo "**Total:** $GRAND_TOTAL commits"
+            echo ""
+            echo "---"
+            echo ""
+          } >> /tmp/entry.md
+
+      - name: Update commit-log.md
+        run: |
+          HEADER="# Commit Activity Log"
+
+          if [ -f commit-log.md ]; then
+            FIRST=$(head -1 commit-log.md)
+            if [ "$FIRST" = "$HEADER" ]; then
+              # Insert new entry after the header + blank line
+              { echo "$HEADER"; echo ""; cat /tmp/entry.md; tail -n +3 commit-log.md; } > commit-log.md.tmp
+            else
+              { echo "$HEADER"; echo ""; cat /tmp/entry.md; cat commit-log.md; } > commit-log.md.tmp
+            fi
+          else
+            { echo "$HEADER"; echo ""; cat /tmp/entry.md; } > commit-log.md.tmp
+          fi
+
+          mv commit-log.md.tmp commit-log.md
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add commit-log.md
+          git diff --staged --quiet && echo "No new commits to log." && exit 0
+          git commit -m "chore: commit log $(date -u +%Y-%m-%dT%H:%M)"
+          git push origin HEAD
