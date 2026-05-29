@@ -1,0 +1,87 @@
+name: Commit Tracker
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'  # Every 6 hours: 00:00, 06:00, 12:00, 18:00 UTC
+  workflow_dispatch:        # Allow manual run from GitHub UI
+
+jobs:
+  track-commits:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Collect commit data and update report
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # To track repos outside peak-flow/peaktrack, add a PAT as COMMIT_TRACKER_TOKEN
+          # in your repo secrets and replace GH_TOKEN above with COMMIT_TRACKER_TOKEN.
+          # Then list additional repos in REPOS below (space-separated, owner/repo format).
+          REPOS: "peak-flow/peaktrack"
+        run: |
+          SINCE=$(date -u -d '6 hours ago' +%Y-%m-%dT%H:%M:%SZ)
+          NOW_LABEL=$(date -u +'%Y-%m-%d %H:%M UTC')
+          REPORT_FILE="commit-tracker.md"
+          TMP=$(mktemp)
+
+          echo "## ${NOW_LABEL}" >> "$TMP"
+          echo "" >> "$TMP"
+          echo "**Window:** commits since \`${SINCE}\`" >> "$TMP"
+          echo "" >> "$TMP"
+          echo "| Repository | Commits | Authors |" >> "$TMP"
+          echo "|------------|--------:|---------|" >> "$TMP"
+
+          TOTAL=0
+          for REPO in $REPOS; do
+            DATA=$(gh api "repos/${REPO}/commits" \
+              --paginate \
+              -f since="${SINCE}" \
+              --jq '[.[] | {sha: .sha[0:7], author: .commit.author.name, message: (.commit.message | split("\n")[0])}]' \
+              2>/dev/null || echo "[]")
+
+            COUNT=$(echo "$DATA" | jq 'length')
+            AUTHORS=$(echo "$DATA" | jq -r '[.[].author] | unique | join(", ")' 2>/dev/null)
+            [ -z "$AUTHORS" ] && AUTHORS="—"
+
+            echo "| \`${REPO}\` | ${COUNT} | ${AUTHORS} |" >> "$TMP"
+            TOTAL=$((TOTAL + COUNT))
+          done
+
+          echo "" >> "$TMP"
+          echo "> **Total commits across all tracked repos:** ${TOTAL}" >> "$TMP"
+          echo "" >> "$TMP"
+          echo "---" >> "$TMP"
+          echo "" >> "$TMP"
+
+          # Prepend new entry so latest is always at the top
+          if [ -f "$REPORT_FILE" ]; then
+            cat "$TMP" "$REPORT_FILE" > combined.md && mv combined.md "$REPORT_FILE"
+          else
+            # Create file with header on first run
+            echo "# Commit Tracker" > "$REPORT_FILE"
+            echo "" >> "$REPORT_FILE"
+            echo "Auto-generated every 6 hours by GitHub Actions." >> "$REPORT_FILE"
+            echo "Add repos to track by editing \`.github/workflows/commit-tracker.yml\`." >> "$REPORT_FILE"
+            echo "" >> "$REPORT_FILE"
+            echo "---" >> "$REPORT_FILE"
+            echo "" >> "$REPORT_FILE"
+            cat "$TMP" >> "$REPORT_FILE"
+          fi
+
+          rm "$TMP"
+          echo "Total commits found: $TOTAL"
+
+      - name: Commit report
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add commit-tracker.md
+          # Only commit if there are changes
+          git diff --staged --quiet || git commit -m "chore: commit tracker update $(date -u +'%Y-%m-%d %H:%M UTC') [skip ci]"
+          git push
