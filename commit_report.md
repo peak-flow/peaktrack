@@ -1,8 +1,23 @@
 # GitHub Commit Report
 
-This file is automatically updated every 6 hours by `scripts/check_commits.py`.
+Updated automatically every 6 hours via GitHub Actions (`.github/workflows/commit-report.yml`).
 Each run prepends the latest window to the top of this file.
 
 ---
 
-_No reports yet. Run the script to generate the first entry._
+# Commit Report — 2026-05-30 12:06 UTC
+
+**Total this window:** peak-flow/peaktrack: 0
+
+| Repo | Window | Commits |
+|------|--------|---------|
+| `peak-flow/peaktrack` | 2026-05-30 06:06 UTC → 2026-05-30 12:06 UTC | 0 |
+
+## `peak-flow/peaktrack`
+
+**Commits in the last 6h** (2026-05-30 06:06 UTC → 2026-05-30 12:06 UTC): **0**
+
+_No commits in this window._
+
+---
+

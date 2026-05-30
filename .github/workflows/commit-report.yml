@@ -1,0 +1,41 @@
+name: 6-Hour Commit Report
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'   # 00:00, 06:00, 12:00, 18:00 UTC
+  workflow_dispatch:          # allow manual trigger from Actions UI
+
+permissions:
+  contents: write             # needed to push commit_report.md back
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: claude/kind-pascal-1gG02   # branch that holds commit_report.md
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Run commit report script
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOS: peak-flow/peaktrack
+          HOURS: '6'
+          REPORT_FILE: commit_report.md
+        run: python3 scripts/check_commits.py
+
+      - name: Commit and push updated report
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add commit_report.md
+          # Only commit if the file actually changed
+          git diff --staged --quiet || git commit -m "chore: update commit report $(date -u +'%Y-%m-%d %H:%M UTC')"
+          git push origin claude/kind-pascal-1gG02
