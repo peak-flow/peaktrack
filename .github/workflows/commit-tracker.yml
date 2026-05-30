@@ -1,0 +1,107 @@
+name: Commit Tracker
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'   # every 6 hours at :00
+  workflow_dispatch:          # allow manual runs
+
+permissions:
+  contents: write
+
+jobs:
+  track-commits:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history so we can count recent commits
+
+      - name: Count commits in last 6 hours
+        id: count
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          SINCE=$(date -u -d '6 hours ago' '+%Y-%m-%dT%H:%M:%SZ')
+          NOW=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+          WINDOW_LABEL=$(date -u -d '6 hours ago' '+%Y-%m-%d %H:%M UTC')
+          NOW_LABEL=$(date -u '+%Y-%m-%d %H:%M UTC')
+
+          # Fetch commits via GitHub REST API (handles all branches)
+          PAGE=1
+          TOTAL=0
+          COMMITS_JSON="[]"
+          while true; do
+            RESP=$(gh api \
+              "repos/${{ github.repository }}/commits?since=${SINCE}&per_page=100&page=${PAGE}" \
+              --jq '[.[] | {sha: .sha[:7], author: .commit.author.name, message: (.commit.message | split("\n")[0])}]')
+            COUNT=$(echo "$RESP" | jq 'length')
+            if [ "$COUNT" -eq 0 ]; then break; fi
+            COMMITS_JSON=$(echo "$COMMITS_JSON $RESP" | jq -s 'add')
+            TOTAL=$((TOTAL + COUNT))
+            PAGE=$((PAGE + 1))
+          done
+
+          echo "total=$TOTAL" >> "$GITHUB_OUTPUT"
+          echo "since=$WINDOW_LABEL" >> "$GITHUB_OUTPUT"
+          echo "until=$NOW_LABEL" >> "$GITHUB_OUTPUT"
+          echo "commits_json<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$COMMITS_JSON" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Append to commit-log.md
+        run: |
+          LOG_FILE="commit-log.md"
+          TOTAL="${{ steps.count.outputs.total }}"
+          SINCE="${{ steps.count.outputs.since }}"
+          UNTIL="${{ steps.count.outputs.until }}"
+          REPO="${{ github.repository }}"
+          COMMITS='${{ steps.count.outputs.commits_json }}'
+
+          # Ensure file exists with header
+          if [ ! -f "$LOG_FILE" ]; then
+            echo "# Commit Activity Log" > "$LOG_FILE"
+            echo "" >> "$LOG_FILE"
+            echo "Auto-generated every 6 hours by GitHub Actions." >> "$LOG_FILE"
+            echo "" >> "$LOG_FILE"
+            echo "---" >> "$LOG_FILE"
+            echo "" >> "$LOG_FILE"
+          fi
+
+          # Write new entry at the top (after header lines)
+          ENTRY="## $SINCE → $UNTIL\n\n"
+          ENTRY+="**Repository:** \`$REPO\`  \n"
+          ENTRY+="**Commits in window:** $TOTAL\n\n"
+
+          if [ "$TOTAL" -gt 0 ]; then
+            ENTRY+="| SHA | Author | Message |\n"
+            ENTRY+="| --- | ------ | ------- |\n"
+            while IFS= read -r line; do
+              SHA=$(echo "$line" | jq -r '.sha')
+              AUTHOR=$(echo "$line" | jq -r '.author')
+              MSG=$(echo "$line" | jq -r '.message' | head -c 80)
+              ENTRY+="| \`$SHA\` | $AUTHOR | $MSG |\n"
+            done < <(echo "$COMMITS" | jq -c '.[]')
+          else
+            ENTRY+="_No commits in this window._\n"
+          fi
+
+          ENTRY+="\n---\n"
+
+          # Prepend the entry after the header block (first 6 lines)
+          HEAD=$(head -6 "$LOG_FILE")
+          TAIL=$(tail -n +7 "$LOG_FILE")
+          printf "%s\n\n%b%s\n" "$HEAD" "$ENTRY" "$TAIL" > "$LOG_FILE"
+
+      - name: Commit and push log
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add commit-log.md
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "chore: update commit log $(date -u '+%Y-%m-%d %H:%M UTC')"
+            git push
+          fi
