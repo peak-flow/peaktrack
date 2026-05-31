@@ -1,0 +1,107 @@
+name: Commit Tracker (Every 6 Hours)
+
+on:
+  schedule:
+    - cron: '0 0,6,12,18 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  track-commits:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Count commits in last 6 hours and update log
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOS: ${{ vars.TRACKED_REPOS || 'peak-flow/peaktrack' }}
+        run: |
+          SINCE=$(date -u -d '6 hours ago' '+%Y-%m-%dT%H:%M:%SZ')
+          NOW=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+          DATE_LABEL=$(date -u '+%Y-%m-%d %H:%M UTC')
+          LOG_FILE="commit-tracker.md"
+
+          # Initialise file with header if it doesn't exist
+          if [ ! -f "$LOG_FILE" ]; then
+            echo "# Commit Tracker" > "$LOG_FILE"
+            echo "" >> "$LOG_FILE"
+            echo "Auto-generated every 6 hours. Each entry covers the preceding 6-hour window." >> "$LOG_FILE"
+            echo "" >> "$LOG_FILE"
+            echo "---" >> "$LOG_FILE"
+            echo "" >> "$LOG_FILE"
+          fi
+
+          # Build the new entry in a temp file first
+          ENTRY=$(mktemp)
+
+          echo "## $DATE_LABEL" >> "$ENTRY"
+          echo "" >> "$ENTRY"
+          echo "**Window:** \`$SINCE\` → \`$NOW\`" >> "$ENTRY"
+          echo "" >> "$ENTRY"
+
+          TOTAL=0
+
+          IFS=',' read -ra REPO_LIST <<< "$REPOS"
+          for REPO in "${REPO_LIST[@]}"; do
+            REPO=$(echo "$REPO" | xargs)   # trim whitespace
+
+            # Fetch commits via GitHub REST API
+            RESPONSE=$(gh api \
+              -H "Accept: application/vnd.github+json" \
+              "/repos/${REPO}/commits?since=${SINCE}&per_page=100" \
+              2>/dev/null || echo "[]")
+
+            COUNT=$(echo "$RESPONSE" | python3 -c "import sys,json; data=json.load(sys.stdin); print(len(data) if isinstance(data, list) else 0)")
+            TOTAL=$((TOTAL + COUNT))
+
+            echo "### \`$REPO\`" >> "$ENTRY"
+            echo "" >> "$ENTRY"
+            echo "**Commits:** $COUNT" >> "$ENTRY"
+            echo "" >> "$ENTRY"
+
+            if [ "$COUNT" -gt 0 ]; then
+              echo "| SHA | Author | Message |" >> "$ENTRY"
+              echo "|-----|--------|---------|" >> "$ENTRY"
+              echo "$RESPONSE" | python3 - <<'PYEOF'
+import sys, json
+data = json.load(sys.stdin)
+for c in data:
+    sha   = c.get("sha","")[:7]
+    msg   = c.get("commit",{}).get("message","").splitlines()[0][:80].replace("|","\\|")
+    author = c.get("commit",{}).get("author",{}).get("name","unknown")[:20]
+    print(f"| `{sha}` | {author} | {msg} |")
+PYEOF
+              echo "" >> "$ENTRY"
+            fi
+          done
+
+          echo "**Total commits across all repos:** $TOTAL" >> "$ENTRY"
+          echo "" >> "$ENTRY"
+          echo "---" >> "$ENTRY"
+          echo "" >> "$ENTRY"
+
+          # Prepend new entry after the header block (after second '---')
+          # Strategy: append to end for simplicity — newest entries at bottom
+          cat "$ENTRY" >> "$LOG_FILE"
+          rm "$ENTRY"
+
+          echo "Log updated: $COUNT commits found."
+
+      - name: Commit updated log
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add commit-tracker.md
+          if git diff --cached --quiet; then
+            echo "Nothing to commit."
+          else
+            git commit -m "chore: update commit tracker [$(date -u '+%Y-%m-%d %H:%M UTC')]"
+            git push
+          fi
