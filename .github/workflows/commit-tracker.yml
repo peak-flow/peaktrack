@@ -1,0 +1,105 @@
+name: Commit Tracker (6h)
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'   # runs at 00:00, 06:00, 12:00, 18:00 UTC
+  workflow_dispatch:          # allows manual run from Actions tab
+
+jobs:
+  track-commits:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write         # needed to push commit-tracker.md
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Collect commit stats
+        env:
+          # GH_PAT must be a personal access token with read:org + repo scopes.
+          # Create one at: Settings → Developer settings → Personal access tokens
+          # Then add it to this repo: Settings → Secrets → Actions → New secret
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          ORG: peak-flow
+        run: |
+          set -euo pipefail
+
+          SINCE=$(date -u -d '6 hours ago' '+%Y-%m-%dT%H:%M:%SZ')
+          NOW=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+
+          echo "Fetching repos for org: $ORG"
+          REPOS=$(gh api "/orgs/$ORG/repos?per_page=100" --paginate \
+            --jq '.[].name' 2>/dev/null || true)
+
+          if [ -z "$REPOS" ]; then
+            echo "No repos found or token lacks org access. Check GH_PAT secret."
+            exit 1
+          fi
+
+          TOTAL=0
+          TABLE_ROWS=""
+
+          while IFS= read -r repo; do
+            [ -z "$repo" ] && continue
+            # Fetch commits since SINCE; --paginate handles repos with >100 commits/6h
+            COUNT=$(gh api "/repos/$ORG/$repo/commits?since=$SINCE&per_page=100" \
+              --paginate 2>/dev/null | jq 'length' || echo 0)
+            if [ "$COUNT" -gt 0 ]; then
+              TABLE_ROWS="${TABLE_ROWS}| \`${repo}\` | ${COUNT} |\n"
+              TOTAL=$((TOTAL + COUNT))
+            fi
+          done <<< "$REPOS"
+
+          # Build the markdown section for this run
+          {
+            echo "## $(date -u '+%Y-%m-%d %H:%M UTC')"
+            echo ""
+            echo "**Window:** \`$SINCE\` → \`$NOW\`  "
+            echo "**Total commits:** $TOTAL"
+            echo ""
+            if [ -n "$TABLE_ROWS" ]; then
+              echo "| Repository | Commits |"
+              echo "|---|---|"
+              printf "%b" "$TABLE_ROWS"
+            else
+              echo "_No commits in this 6-hour window._"
+            fi
+            echo ""
+            echo "---"
+            echo ""
+          } > /tmp/new_entry.md
+
+          cat /tmp/new_entry.md   # log output for debugging
+
+          OUTFILE="commit-tracker.md"
+          if [ -f "$OUTFILE" ]; then
+            # Insert new entry after the H1 + subtitle lines (first 3 lines)
+            HEAD=$(head -n 3 "$OUTFILE")
+            TAIL=$(tail -n +4 "$OUTFILE")
+            {
+              printf "%s\n\n" "$HEAD"
+              cat /tmp/new_entry.md
+              printf "%s\n" "$TAIL"
+            } > "${OUTFILE}.tmp"
+            mv "${OUTFILE}.tmp" "$OUTFILE"
+          else
+            {
+              echo "# GitHub Commit Tracker"
+              echo ""
+              echo "Auto-generated every 6 hours. Newest entries are at the top."
+              echo ""
+              cat /tmp/new_entry.md
+            } > "$OUTFILE"
+          fi
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add commit-tracker.md
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "chore: commit tracker $(date -u '+%Y-%m-%d %H:%M UTC')"
+            git push origin HEAD
+          fi
