@@ -1,0 +1,46 @@
+name: Commit Tracker
+
+on:
+  schedule:
+    # Runs at 00:00, 06:00, 12:00, 18:00 UTC every day
+    - cron: "0 0,6,12,18 * * *"
+  workflow_dispatch: # allow manual runs
+
+permissions:
+  contents: write
+
+jobs:
+  track:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Use a PAT so the commit can trigger further workflows if needed.
+          # Fall back to GITHUB_TOKEN if GH_PAT is not set.
+          token: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run commit tracker
+        env:
+          # GH_PAT must be a classic or fine-grained PAT with read access to
+          # all repos you want to track. Set it in repo/org secrets.
+          # If absent, falls back to GITHUB_TOKEN (current repo only).
+          GH_TOKEN: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+          GH_ORG: peak-flow
+          REPORT_DIR: commit-reports
+        run: python scripts/track_commits.py
+
+      - name: Commit and push report
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add commit-reports/
+          # Only commit if there are changes
+          git diff --cached --quiet || git commit -m "chore: commit activity report $(date -u +'%Y-%m-%d %H:%M UTC')"
+          git push
