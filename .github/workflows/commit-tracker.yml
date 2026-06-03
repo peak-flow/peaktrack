@@ -1,0 +1,98 @@
+name: 6-Hour Commit Tracker
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  track-commits:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_ORG_PAT || secrets.GITHUB_TOKEN }}
+
+      - name: Fetch commits from last 6 hours and update log
+        env:
+          GH_TOKEN: ${{ secrets.GH_ORG_PAT || secrets.GITHUB_TOKEN }}
+        run: |
+          python3 << 'PYEOF'
+          import subprocess, json, datetime, os
+          from collections import defaultdict
+
+          token = os.environ['GH_TOKEN']
+          since = (datetime.datetime.utcnow() - datetime.timedelta(hours=6)).strftime('%Y-%m-%dT%H:%M:%SZ')
+          now_str = datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')
+
+          repo_counts = defaultdict(int)
+          page = 1
+
+          while True:
+              result = subprocess.run([
+                  'curl', '-s',
+                  '-H', f'Authorization: Bearer {token}',
+                  '-H', 'Accept: application/vnd.github+json',
+                  f'https://api.github.com/search/commits?q=org:peak-flow+committer-date:>{since}&per_page=100&page={page}'
+              ], capture_output=True, text=True)
+
+              data = json.loads(result.stdout)
+              items = data.get('items', [])
+
+              for item in items:
+                  repo = item['repository']['full_name']
+                  repo_counts[repo] += 1
+
+              if len(items) < 100:
+                  break
+              page += 1
+
+          total = sum(repo_counts.values())
+
+          lines = [
+              f'## {now_str}',
+              '',
+              '| Repository | Commits |',
+              '|------------|---------|',
+          ]
+
+          for repo, count in sorted(repo_counts.items(), key=lambda x: -x[1]):
+              lines.append(f'| `{repo}` | {count} |')
+
+          if not repo_counts:
+              lines.append('| _(no commits)_ | 0 |')
+
+          lines += ['', f'**Total commits: {total}**', '', '---', '']
+
+          new_section = '\n'.join(lines) + '\n\n'
+
+          log_path = 'commit_log.md'
+          header = '# Commit Tracker Log\n\n'
+
+          try:
+              with open(log_path, 'r') as f:
+                  existing = f.read()
+              if existing.startswith(header):
+                  updated = header + new_section + existing[len(header):]
+              else:
+                  updated = header + new_section + existing
+          except FileNotFoundError:
+              updated = header + new_section
+
+          with open(log_path, 'w') as f:
+              f.write(updated)
+
+          print(f"Logged {total} commits across {len(repo_counts)} repos for window ending {now_str}")
+          PYEOF
+
+      - name: Commit and push log
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add commit_log.md
+          git diff --cached --quiet || git commit -m "chore: commit log $(date -u '+%Y-%m-%d %H:%M UTC')"
+          git push
