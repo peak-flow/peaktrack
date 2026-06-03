@@ -1,0 +1,38 @@
+name: 6-Hour Commit Tracker
+
+on:
+  schedule:
+    # Runs every 6 hours: 00:00, 06:00, 12:00, 18:00 UTC
+    - cron: "0 0,6,12,18 * * *"
+  workflow_dispatch: # allow manual runs
+
+permissions:
+  contents: write
+
+jobs:
+  track-commits:
+    runs-on: ubuntu-latest
+    env:
+      GITHUB_ORG: peak-flow
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run commit tracker
+        run: |
+          chmod +x scripts/track-commits.sh
+          bash scripts/track-commits.sh
+
+      - name: Commit and push report
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add commit-reports/
+          if git diff --cached --quiet; then
+            echo "No new report to commit."
+          else
+            git commit -m "chore: add commit report $(date -u +"%Y-%m-%d %H:%M UTC")"
+            git push origin HEAD
+          fi
