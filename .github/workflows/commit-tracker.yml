@@ -1,0 +1,52 @@
+name: 6-hour Commit Tracker
+
+on:
+  schedule:
+    # Runs at 00:00, 06:00, 12:00, 18:00 UTC every day
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      hours:
+        description: 'Hours to look back (default 6)'
+        required: false
+        default: '6'
+
+permissions:
+  contents: write
+
+jobs:
+  track-commits:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Use the PAT so the push in the final step is authorised
+          token: ${{ secrets.ORG_GITHUB_TOKEN }}
+          # Always update the log on the default branch
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Search commits and update log
+        env:
+          # ORG_GITHUB_TOKEN must be a fine-grained or classic PAT with:
+          #   - repo (or public_repo for public-only)
+          #   - read:org
+          # Create it at https://github.com/settings/tokens and add it as a
+          # repository secret named ORG_GITHUB_TOKEN.
+          GH_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
+        run: python3 scripts/update_commit_log.py
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add commit-log.md
+          git diff --staged --quiet && echo "No changes" && exit 0
+          git commit -m "chore: update commit log $(date -u '+%Y-%m-%d %H:%M UTC')"
+          git push
