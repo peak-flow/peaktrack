@@ -1,0 +1,135 @@
+name: Commit Activity Tracker
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'   # Every 6 hours: 00:00, 06:00, 12:00, 18:00 UTC
+  workflow_dispatch:          # Allow manual trigger from the Actions tab
+
+jobs:
+  track-commits:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.ORG_GITHUB_TOKEN }}
+
+      - name: Fetch and tally commits across peak-flow org
+        env:
+          GH_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
+        run: |
+          python3 - <<'PYEOF'
+          import os, requests, json
+          from datetime import datetime, timedelta, timezone
+
+          TOKEN = os.environ["GH_TOKEN"]
+          ORG   = "peak-flow"
+          HOURS = 6
+
+          sess = requests.Session()
+          sess.headers.update({
+              "Authorization": f"Bearer {TOKEN}",
+              "Accept": "application/vnd.github+json",
+              "X-GitHub-Api-Version": "2022-11-28",
+          })
+
+          now   = datetime.now(timezone.utc)
+          since = (now - timedelta(hours=HOURS)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+          # --- collect all repos (paginated) ---
+          repos, page = [], 1
+          while True:
+              r = sess.get(
+                  f"https://api.github.com/orgs/{ORG}/repos",
+                  params={"per_page": 100, "page": page, "sort": "updated"},
+              )
+              r.raise_for_status()
+              batch = r.json()
+              if not batch:
+                  break
+              repos.extend(batch)
+              if len(batch) < 100:
+                  break
+              page += 1
+
+          # --- count commits per repo ---
+          results = []
+          for repo in repos:
+              name = repo["name"]
+              r = sess.get(
+                  f"https://api.github.com/repos/{ORG}/{name}/commits",
+                  params={"since": since, "per_page": 100},
+              )
+              if r.status_code in (409, 404, 451):   # empty / not found / blocked
+                  continue
+              if r.status_code != 200:
+                  print(f"  skip {name}: HTTP {r.status_code}")
+                  continue
+              commits = r.json()
+              if commits:
+                  results.append({"repo": name, "count": len(commits), "commits": commits})
+
+          results.sort(key=lambda x: x["count"], reverse=True)
+          total = sum(x["count"] for x in results)
+
+          # --- build markdown ---
+          ts      = now.strftime("%Y-%m-%d %H:%M UTC")
+          since_h = (now - timedelta(hours=HOURS)).strftime("%Y-%m-%d %H:%M UTC")
+
+          md = [
+              "# Commit Activity Report",
+              "",
+              f"| | |",
+              f"|---|---|",
+              f"| **Generated** | {ts} |",
+              f"| **Window** | Last {HOURS} hours (since {since_h}) |",
+              f"| **Repos scanned** | {len(repos)} |",
+              f"| **Repos with commits** | {len(results)} |",
+              f"| **Total commits** | **{total}** |",
+              "",
+          ]
+
+          if results:
+              md += [
+                  "## Summary",
+                  "",
+                  "| Repository | Commits |",
+                  "|:-----------|--------:|",
+              ]
+              for entry in results:
+                  repo_url = f"https://github.com/{ORG}/{entry['repo']}"
+                  md.append(f"| [{entry['repo']}]({repo_url}) | {entry['count']} |")
+
+              md += ["", "## Detail", ""]
+              for entry in results:
+                  md.append(f"### [{entry['repo']}](https://github.com/{ORG}/{entry['repo']})")
+                  md.append("")
+                  for c in entry["commits"][:15]:
+                      sha    = c["sha"][:7]
+                      msg    = c["commit"]["message"].split("\n")[0][:80]
+                      author = c["commit"]["author"]["name"]
+                      date   = c["commit"]["author"]["date"][:16].replace("T", " ")
+                      md.append(f"- `{sha}` {msg}  *(by {author} at {date})*")
+                  if len(entry["commits"]) > 15:
+                      md.append(f"- *… and {len(entry['commits']) - 15} more*")
+                  md.append("")
+          else:
+              md += ["*No commits in the last 6 hours.*", ""]
+
+          with open("commit-activity.md", "w") as f:
+              f.write("\n".join(md))
+
+          print(f"Report written: {total} commits across {len(results)} repos")
+          PYEOF
+
+      - name: Commit report
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add commit-activity.md
+          git diff --staged --quiet && echo "No changes" && exit 0
+          git commit -m "chore: commit activity report $(date -u +'%Y-%m-%d %H:%M UTC')"
+          git push
