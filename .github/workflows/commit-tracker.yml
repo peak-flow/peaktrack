@@ -1,0 +1,98 @@
+name: Commit Tracker (6-Hour Report)
+
+on:
+  schedule:
+    # Runs every 6 hours: midnight, 6am, noon, 6pm UTC
+    - cron: '0 0,6,12,18 * * *'
+  workflow_dispatch: # Allow manual trigger
+
+permissions:
+  contents: write
+
+jobs:
+  track-commits:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate commit report
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ORG_OR_USER: peak-flow
+        run: |
+          SINCE=$(date -u -d '6 hours ago' +"%Y-%m-%dT%H:%M:%SZ")
+          NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          REPORT_FILE="commit-reports/report-$(date -u +"%Y-%m-%d_%H-%M").md"
+
+          mkdir -p commit-reports
+
+          echo "# Commit Report" > "$REPORT_FILE"
+          echo "" >> "$REPORT_FILE"
+          echo "**Period:** \`$SINCE\` → \`$NOW\`" >> "$REPORT_FILE"
+          echo "" >> "$REPORT_FILE"
+          echo "---" >> "$REPORT_FILE"
+          echo "" >> "$REPORT_FILE"
+
+          TOTAL=0
+
+          # Fetch all repos for the org/user
+          REPOS=$(gh api "orgs/$ORG_OR_USER/repos" --paginate -q '.[].full_name' 2>/dev/null \
+                  || gh api "users/$ORG_OR_USER/repos" --paginate -q '.[].full_name')
+
+          for REPO in $REPOS; do
+            # Count commits since SINCE across all branches (default branch only via API)
+            COUNT=$(gh api "repos/$REPO/commits?since=$SINCE&per_page=100" --paginate \
+                    -q 'length' 2>/dev/null || echo 0)
+
+            if [ "$COUNT" -gt 0 ]; then
+              echo "## \`$REPO\` — $COUNT commit(s)" >> "$REPORT_FILE"
+              echo "" >> "$REPORT_FILE"
+
+              # List commit details
+              gh api "repos/$REPO/commits?since=$SINCE&per_page=100" --paginate \
+                -q '.[] | "- [`" + .sha[0:7] + "`](" + .html_url + ") " + .commit.message + " — *" + .commit.author.name + "*"' \
+                2>/dev/null >> "$REPORT_FILE" || true
+
+              echo "" >> "$REPORT_FILE"
+              TOTAL=$((TOTAL + COUNT))
+            fi
+          done
+
+          if [ "$TOTAL" -eq 0 ]; then
+            echo "_No commits found in the last 6 hours._" >> "$REPORT_FILE"
+          else
+            # Insert summary after header
+            sed -i "s/^---$/**Total commits:** $TOTAL across $(echo "$REPOS" | wc -w) repos checked\n\n---/" "$REPORT_FILE"
+          fi
+
+          # Update the rolling summary file
+          SUMMARY="commit-reports/SUMMARY.md"
+          echo "# Commit Activity Summary" > "$SUMMARY"
+          echo "" >> "$SUMMARY"
+          echo "Last updated: \`$NOW\`" >> "$SUMMARY"
+          echo "" >> "$SUMMARY"
+          echo "| Report | Period End | Total Commits |" >> "$SUMMARY"
+          echo "|--------|-----------|---------------|" >> "$SUMMARY"
+
+          for f in $(ls commit-reports/report-*.md 2>/dev/null | sort -r | head -20); do
+            FNAME=$(basename "$f")
+            FDATE=$(echo "$FNAME" | sed 's/report-//;s/\.md//')
+            COMMITS=$(grep -oP '(?<=Total commits:\*\* )\d+' "$f" 2>/dev/null || echo "0")
+            echo "| [$FNAME](${FNAME}) | $FDATE | $COMMITS |" >> "$SUMMARY"
+          done
+
+          echo "" >> "$SUMMARY"
+          echo "_Reports are generated automatically every 6 hours._" >> "$SUMMARY"
+
+          cat "$REPORT_FILE"
+
+      - name: Commit and push report
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add commit-reports/
+          git diff --cached --quiet || git commit -m "chore: add commit report $(date -u +"%Y-%m-%d %H:%M UTC")"
+          git push
