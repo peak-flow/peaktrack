@@ -1,0 +1,77 @@
+name: Commit Tracker
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  track-commits:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Count commits in last 6 hours
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ORG: peak-flow
+        run: |
+          SINCE=$(date -u -d '6 hours ago' +"%Y-%m-%dT%H:%M:%SZ")
+          NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          WINDOW_START=$(date -u -d '6 hours ago' +"%Y-%m-%d %H:%M UTC")
+          WINDOW_END=$(date -u +"%Y-%m-%d %H:%M UTC")
+
+          echo "## Commit Check: ${WINDOW_END}" >> commit-log.md
+          echo "" >> commit-log.md
+          echo "**Window:** ${WINDOW_START} → ${WINDOW_END}" >> commit-log.md
+          echo "" >> commit-log.md
+          echo "| Repository | Commits |" >> commit-log.md
+          echo "|---|---|" >> commit-log.md
+
+          TOTAL=0
+          REPO_LINES=""
+          HAS_COMMITS=false
+
+          # List all repos in the org (up to 100)
+          REPOS=$(gh api "/orgs/${ORG}/repos?per_page=100&sort=updated" --jq '.[].full_name' 2>/dev/null || echo "")
+
+          if [ -z "$REPOS" ]; then
+            echo "| _(could not list org repos — checking peaktrack only)_ | — |" >> commit-log.md
+            REPOS="${ORG}/peaktrack"
+          fi
+
+          for FULL_NAME in $REPOS; do
+            OWNER="${FULL_NAME%%/*}"
+            REPO="${FULL_NAME##*/}"
+            COUNT=$(gh api "/repos/${FULL_NAME}/commits?since=${SINCE}&per_page=100" \
+              --jq 'length' 2>/dev/null || echo "0")
+            if [ "$COUNT" -gt 0 ]; then
+              echo "| \`${FULL_NAME}\` | ${COUNT} |" >> commit-log.md
+              TOTAL=$((TOTAL + COUNT))
+              HAS_COMMITS=true
+            fi
+          done
+
+          if [ "$HAS_COMMITS" = false ]; then
+            echo "| _(no commits in this window)_ | 0 |" >> commit-log.md
+          fi
+
+          echo "" >> commit-log.md
+          echo "**Total commits:** ${TOTAL}" >> commit-log.md
+          echo "" >> commit-log.md
+          echo "---" >> commit-log.md
+          echo "" >> commit-log.md
+
+      - name: Commit and push log
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add commit-log.md
+          git diff --staged --quiet || git commit -m "chore: update commit log $(date -u +'%Y-%m-%d %H:%M UTC')"
+          git push
