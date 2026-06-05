@@ -1,0 +1,110 @@
+name: 6-Hour Commit Activity Report
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  commit-report:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate commit report
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ORG: peak-flow
+        run: |
+          SINCE=$(date -u -d '6 hours ago' '+%Y-%m-%dT%H:%M:%SZ')
+          NOW=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+          REPORT_FILE="commit-report.md"
+
+          # Create file with header if it doesn't exist
+          if [ ! -f "$REPORT_FILE" ]; then
+            cat > "$REPORT_FILE" << 'HEADER'
+          # GitHub Commit Activity Report
+
+          Auto-generated every 6 hours by [commit-report workflow](.github/workflows/commit-report.yml).
+
+          ---
+
+          HEADER
+          fi
+
+          # Collect report for this run
+          SECTION=""
+          TOTAL_COMMITS=0
+          REPOS_WITH_COMMITS=()
+
+          # List all repos in the org
+          REPOS=$(gh api "orgs/$ORG/repos?per_page=100&sort=updated" --jq '.[].name' 2>/dev/null || echo "peaktrack")
+
+          for REPO in $REPOS; do
+            # Fetch commits since 6 hours ago on default branch
+            COMMITS_JSON=$(gh api "repos/$ORG/$REPO/commits?since=$SINCE&per_page=100" 2>/dev/null || echo "[]")
+            COUNT=$(echo "$COMMITS_JSON" | jq 'length')
+
+            if [ "$COUNT" -gt 0 ]; then
+              TOTAL_COMMITS=$((TOTAL_COMMITS + COUNT))
+              REPOS_WITH_COMMITS+=("$REPO ($COUNT)")
+
+              SECTION="${SECTION}\n### \`$ORG/$REPO\` — $COUNT commit(s)\n\n"
+              SECTION="${SECTION}| SHA | Author | Message |\n"
+              SECTION="${SECTION}|-----|--------|--------|\n"
+
+              # Build table rows
+              while IFS= read -r row; do
+                SHA=$(echo "$row" | jq -r '.sha[0:7]')
+                AUTHOR=$(echo "$row" | jq -r '.commit.author.name // "unknown"')
+                MSG=$(echo "$row" | jq -r '.commit.message | split("\n")[0] | .[0:80]')
+                SECTION="${SECTION}| \`$SHA\` | $AUTHOR | $MSG |\n"
+              done < <(echo "$COMMITS_JSON" | jq -c '.[]')
+
+              SECTION="${SECTION}\n"
+            fi
+          done
+
+          # Build the full section header
+          if [ "$TOTAL_COMMITS" -eq 0 ]; then
+            SUMMARY="No commits in the last 6 hours."
+          else
+            REPO_LIST=$(IFS=', '; echo "${REPOS_WITH_COMMITS[*]}")
+            SUMMARY="**$TOTAL_COMMITS** commit(s) across: $REPO_LIST"
+          fi
+
+          BLOCK="## $(date -u '+%Y-%m-%d %H:%M UTC') — $SUMMARY\n\n_Window: \`$SINCE\` → \`$NOW\`_\n\n"
+          if [ -n "$SECTION" ]; then
+            BLOCK="${BLOCK}${SECTION}"
+          fi
+          BLOCK="${BLOCK}---\n\n"
+
+          # Prepend new section after the header (after the first '---')
+          HEADER_PART=$(sed -n '1,/^---$/p' "$REPORT_FILE")
+          TAIL_PART=$(sed -n '/^---$/,$ {/^---$/d; p}' "$REPORT_FILE" | tail -n +2)
+
+          {
+            echo "$HEADER_PART"
+            echo ""
+            printf '%b' "$BLOCK"
+            echo "$TAIL_PART"
+          } > "${REPORT_FILE}.tmp"
+
+          mv "${REPORT_FILE}.tmp" "$REPORT_FILE"
+
+      - name: Commit and push report
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add commit-report.md
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "chore: update commit activity report $(date -u '+%Y-%m-%d %H:%M UTC')"
+            git push origin HEAD
+          fi
