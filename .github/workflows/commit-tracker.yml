@@ -1,0 +1,90 @@
+name: Commit Tracker
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'   # every 6 hours
+  workflow_dispatch:         # allow manual trigger
+
+jobs:
+  track-commits:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check commits from last 6 hours
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          SINCE=$(date -u -d "6 hours ago" +"%Y-%m-%dT%H:%M:%SZ")
+          DISPLAY_TIME=$(date -u +"%Y-%m-%d %H:%M UTC")
+
+          echo "Checking commits since $SINCE"
+
+          # Search commits across all peak-flow repos in the last 6 hours
+          RESPONSE=$(curl -s -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/search/commits?q=user:peak-flow+committer-date:>=${SINCE}&per_page=100&sort=committer-date&order=desc")
+
+          TOTAL=$(echo "$RESPONSE" | jq '.total_count')
+          echo "Total commits found: $TOTAL"
+
+          # Build the markdown section
+          {
+            echo ""
+            echo "## $DISPLAY_TIME"
+            echo ""
+            echo "**Total commits in last 6 hours:** $TOTAL"
+            echo ""
+          } >> /tmp/new_section.md
+
+          if [ "$TOTAL" -eq 0 ]; then
+            echo "_No commits in this period._" >> /tmp/new_section.md
+          else
+            # Group by repo
+            echo "$RESPONSE" | jq -r '
+              .items |
+              group_by(.repository.full_name) |
+              map({
+                repo: .[0].repository.full_name,
+                count: length,
+                authors: ([.[].author.login] | unique | join(", "))
+              }) |
+              sort_by(-.count) |
+              .[] |
+              "| \(.repo) | \(.count) | \(.authors) |"
+            ' > /tmp/rows.txt
+
+            {
+              echo "| Repo | Commits | Authors |"
+              echo "|------|---------|---------|"
+              cat /tmp/rows.txt
+            } >> /tmp/new_section.md
+          fi
+
+          echo "" >> /tmp/new_section.md
+          echo "---" >> /tmp/new_section.md
+
+          # Append to commit-tracker.md (create if missing)
+          if [ ! -f commit-tracker.md ]; then
+            echo "# GitHub Commit Tracker" > commit-tracker.md
+            echo "" >> commit-tracker.md
+            echo "_Auto-updated every 6 hours. Tracks commits across all peak-flow repos._" >> commit-tracker.md
+          fi
+
+          cat /tmp/new_section.md >> commit-tracker.md
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add commit-tracker.md
+          git diff --staged --quiet || git commit -m "chore: update commit tracker $(date -u +'%Y-%m-%d %H:%M UTC')"
+          git push origin master
