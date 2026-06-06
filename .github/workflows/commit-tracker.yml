@@ -1,0 +1,81 @@
+name: Commit Tracker
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'   # runs at 00:00, 06:00, 12:00, 18:00 UTC
+  workflow_dispatch:          # allow manual trigger from the Actions tab
+
+jobs:
+  track-commits:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write         # needed to commit the updated log file
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Count commits in the last 6 hours and update log
+        env:
+          # Use GH_PAT (a repo secret you add) for cross-repo / org-wide access.
+          # Falls back to the built-in GITHUB_TOKEN (current repo only).
+          GH_TOKEN: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+          ORG: peak-flow
+        run: |
+          set -euo pipefail
+
+          SINCE=$(date -u -d '6 hours ago' '+%Y-%m-%dT%H:%M:%SZ')
+          NOW=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+          LABEL=$(date -u '+%Y-%m-%d %H:%M UTC')
+          LOG="commit-log.md"
+
+          # Fetch every repo in the org.
+          # Requires a PAT with `repo` scope stored as secret GH_PAT.
+          # If that isn't configured yet, falls back to just this repo.
+          if ! REPOS=$(gh api "orgs/$ORG/repos?per_page=100" \
+                        --paginate --jq '.[].name' 2>/dev/null); then
+            echo "⚠ Could not list org repos – falling back to current repo only."
+            REPOS="peaktrack"
+          fi
+
+          TOTAL=0
+          TABLE_ROWS=""
+
+          for REPO in $REPOS; do
+            COUNT=0
+            if RAW=$(gh api "repos/$ORG/$REPO/commits?since=$SINCE&per_page=100" \
+                      --paginate --jq 'length' 2>/dev/null); then
+              COUNT=$(printf '%s\n' "$RAW" | awk '{s+=$1} END {print s+0}')
+            fi
+
+            if [[ "$COUNT" -gt 0 ]]; then
+              TOTAL=$((TOTAL + COUNT))
+              TABLE_ROWS="${TABLE_ROWS}| \`${ORG}/${REPO}\` | ${COUNT} |\n"
+            fi
+          done
+
+          # ── Build the new log entry ──────────────────────────────────────
+          {
+            printf '\n---\n\n'
+            printf '## %s\n\n' "$LABEL"
+            printf '**Window:** `%s` → `%s`  \n' "$SINCE" "$NOW"
+            printf '**Total commits:** %d\n\n' "$TOTAL"
+
+            if [[ -n "$TABLE_ROWS" ]]; then
+              printf '| Repository | Commits |\n'
+              printf '| ---------- | ------- |\n'
+              printf '%b' "$TABLE_ROWS"
+            else
+              printf '_No commits recorded in this window._\n'
+            fi
+          } >> "$LOG"
+
+          # ── Commit and push ──────────────────────────────────────────────
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "$LOG"
+          if git diff --staged --quiet; then
+            echo "Nothing new to commit."
+          else
+            git commit -m "chore: commit log $LABEL"
+            git push
+          fi
