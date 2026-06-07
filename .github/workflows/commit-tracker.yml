@@ -1,0 +1,116 @@
+name: Commit Tracker
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'   # Runs at 00:00, 06:00, 12:00, 18:00 UTC every day
+  workflow_dispatch:
+    inputs:
+      since_hours:
+        description: 'Hours to look back (default: 6)'
+        required: false
+        default: '6'
+
+# ─── Configure repos to track here ──────────────────────────────────────────
+# Add one repo per line in owner/repo format.
+# For repos outside this repository a Personal Access Token with `repo` scope
+# must be stored as a secret named COMMIT_TRACKER_TOKEN.
+env:
+  TRACKED_REPOS: |
+    peak-flow/peaktrack
+
+jobs:
+  track-commits:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Count commits and update log
+        env:
+          GH_TOKEN: ${{ secrets.COMMIT_TRACKER_TOKEN || secrets.GITHUB_TOKEN }}
+          HOURS_BACK: ${{ inputs.since_hours || '6' }}
+        run: |
+          set -euo pipefail
+
+          # ── Time window ──────────────────────────────────────────────────
+          NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          SINCE=$(date -u -d "${HOURS_BACK} hours ago" +"%Y-%m-%dT%H:%M:%SZ")
+          DISPLAY_NOW=$(date -u +"%Y-%m-%d %H:%M UTC")
+          DISPLAY_SINCE=$(date -u -d "${HOURS_BACK} hours ago" +"%Y-%m-%d %H:%M UTC")
+
+          # ── Build the new markdown entry ─────────────────────────────────
+          ENTRY_FILE=$(mktemp)
+
+          {
+            echo "## ${DISPLAY_NOW}"
+            echo ""
+            echo "> **Window:** ${DISPLAY_SINCE} → ${DISPLAY_NOW}"
+            echo ""
+            echo "| Repository | Commits |"
+            echo "|------------|--------:|"
+          } > "$ENTRY_FILE"
+
+          TOTAL=0
+          ACTIVE_REPOS=0
+
+          while IFS= read -r REPO; do
+            [[ -z "$REPO" ]] && continue
+
+            # Count commits across all pages for this repo in the time window
+            COUNT=$(gh api \
+              "repos/${REPO}/commits?since=${SINCE}&until=${NOW}&per_page=100" \
+              --paginate --jq 'length' 2>/dev/null \
+              | paste -sd+ - \
+              | bc 2>/dev/null || echo 0)
+
+            [[ -z "$COUNT" || "$COUNT" == "0" ]] && COUNT=0
+
+            echo "| \`${REPO}\` | ${COUNT} |" >> "$ENTRY_FILE"
+
+            TOTAL=$((TOTAL + COUNT))
+            [[ "$COUNT" -gt 0 ]] && ACTIVE_REPOS=$((ACTIVE_REPOS + 1))
+          done <<< "$TRACKED_REPOS"
+
+          {
+            echo ""
+            echo "**Total:** ${TOTAL} commit(s) across ${ACTIVE_REPOS} active repo(s)"
+            echo ""
+            echo "---"
+            echo ""
+          } >> "$ENTRY_FILE"
+
+          # ── Prepend entry into commit-log.md (newest entries at top) ─────
+          HEADER_FILE=$(mktemp)
+          BODY_FILE=$(mktemp)
+
+          if [[ -f commit-log.md ]]; then
+            # Separate the static header (first 4 lines) from existing entries
+            head -4 commit-log.md > "$HEADER_FILE"
+            tail -n +5 commit-log.md > "$BODY_FILE"
+          else
+            # First run — write the static header
+            cat > "$HEADER_FILE" <<'HEADER'
+          # Commit Activity Log
+
+          Automatically updated every 6 hours via GitHub Actions.
+
+          HEADER
+            touch "$BODY_FILE"
+          fi
+
+          cat "$HEADER_FILE" "$ENTRY_FILE" "$BODY_FILE" > commit-log.md
+
+      - name: Commit and push log
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add commit-log.md
+          if git diff --staged --quiet; then
+            echo "Nothing changed — skipping commit."
+          else
+            git commit -m "chore: commit-tracker update $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            git push
+          fi
