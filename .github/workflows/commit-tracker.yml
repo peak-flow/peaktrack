@@ -1,0 +1,105 @@
+name: Commit Activity Tracker
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'   # 00:00, 06:00, 12:00, 18:00 UTC
+  workflow_dispatch:          # allow manual run from Actions tab
+
+jobs:
+  track-commits:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_ORG_PAT }}
+
+      - name: Generate commit report
+        env:
+          GH_TOKEN: ${{ secrets.GH_ORG_PAT }}
+        run: |
+          set -euo pipefail
+
+          SINCE=$(date -u -d '6 hours ago' '+%Y-%m-%dT%H:%M:%SZ')
+          NOW=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+          DATE=$(date -u '+%Y-%m-%d')
+          HOUR=$(date -u '+%H')
+          FILENAME="report-${DATE}-${HOUR}00.md"
+          REPORT_DIR="commit-reports"
+          OUTPUT="${REPORT_DIR}/${FILENAME}"
+
+          mkdir -p "$REPORT_DIR"
+
+          # ── Report header ─────────────────────────────────────────────────
+          {
+            echo "# Commit Report — ${DATE} ${HOUR}:00 UTC"
+            echo ""
+            echo "> **Window:** \`${SINCE}\` → \`${NOW}\`"
+            echo ""
+            echo "| Repository | Commits | Authors |"
+            echo "|---|---:|---|"
+          } > "$OUTPUT"
+
+          TOTAL=0
+          ACTIVE=0
+
+          # ── Fetch all org repos dynamically ───────────────────────────────
+          REPOS=$(gh api orgs/peak-flow/repos --paginate --jq '.[].full_name' 2>/dev/null || true)
+
+          while IFS= read -r REPO; do
+            [ -z "$REPO" ] && continue
+
+            # One paginated call — jq streams one line per commit
+            COMMITS=$(gh api \
+              "repos/${REPO}/commits?since=${SINCE}&per_page=100" \
+              --paginate \
+              --jq '.[] | (.commit.author.name) + "|" + .sha' \
+              2>/dev/null || true)
+
+            [ -z "$COMMITS" ] && continue
+
+            COUNT=$(printf '%s\n' "$COMMITS" | wc -l)
+            AUTHORS=$(printf '%s\n' "$COMMITS" | cut -d'|' -f1 | sort -u | paste -sd ', ' -)
+
+            echo "| [\`${REPO}\`](https://github.com/${REPO}) | ${COUNT} | ${AUTHORS} |" >> "$OUTPUT"
+            TOTAL=$((TOTAL + COUNT))
+            ACTIVE=$((ACTIVE + 1))
+          done <<< "$REPOS"
+
+          # ── Report footer ─────────────────────────────────────────────────
+          {
+            echo ""
+            echo "---"
+            echo ""
+            echo "**Total:** ${TOTAL} commit(s) across ${ACTIVE} repo(s)"
+          } >> "$OUTPUT"
+
+          echo "Wrote: $OUTPUT (${TOTAL} commits, ${ACTIVE} repos)"
+
+          # ── Update rolling summary ────────────────────────────────────────
+          SUMMARY="${REPORT_DIR}/SUMMARY.md"
+          if [ ! -f "$SUMMARY" ]; then
+            {
+              echo "# Commit Activity Summary"
+              echo ""
+              echo "| Date / Time (UTC) | Report | Commits | Repos |"
+              echo "|---|---|---:|---:|"
+            } > "$SUMMARY"
+          fi
+
+          echo "| ${DATE} ${HOUR}:00 | [${FILENAME}](./${FILENAME}) | ${TOTAL} | ${ACTIVE} |" >> "$SUMMARY"
+
+      - name: Commit and push report
+        run: |
+          git config user.name  "Commit Tracker Bot"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add commit-reports/
+          if git diff --staged --quiet; then
+            echo "Nothing new to commit"
+          else
+            git commit -m "chore: commit report $(date -u '+%Y-%m-%d %H:00 UTC')"
+            git push origin ${{ github.ref_name }}
+          fi
