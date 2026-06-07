@@ -1,0 +1,116 @@
+name: Commit Activity Tracker
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'   # every 6 hours: 00:00, 06:00, 12:00, 18:00 UTC
+  workflow_dispatch:          # allow manual runs
+
+permissions:
+  contents: write
+
+jobs:
+  track-commits:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Fetch commits and update log
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          set -euo pipefail
+
+          NOW_UTC=$(date -u '+%Y-%m-%d %H:%M')
+          SINCE=$(date -u -d '6 hours ago' '+%Y-%m-%dT%H:%M:%SZ')
+          LOG_FILE="commit-activity-log.md"
+
+          # Create file with header if it doesn't exist
+          if [ ! -f "$LOG_FILE" ]; then
+            cat > "$LOG_FILE" <<'HEADER'
+          # peak-flow Commit Activity Log
+          _Auto-updated every 6 hours via GitHub Actions_
+
+          HEADER
+          fi
+
+          # Search commits across all peak-flow repos since SINCE
+          # GitHub search API: 100 per page max, paginate if needed
+          PAGE=1
+          ALL_ITEMS="[]"
+          while true; do
+            RESPONSE=$(curl -s -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github.cloak-preview+json" \
+              "https://api.github.com/search/commits?q=user:peak-flow+author-date:>=${SINCE}&per_page=100&page=${PAGE}&sort=author-date&order=desc")
+            ITEMS=$(echo "$RESPONSE" | jq '.items')
+            COUNT=$(echo "$ITEMS" | jq 'length')
+            ALL_ITEMS=$(echo "$ALL_ITEMS $ITEMS" | jq -s 'add')
+            if [ "$COUNT" -lt 100 ]; then
+              break
+            fi
+            PAGE=$((PAGE + 1))
+          done
+
+          TOTAL=$(echo "$ALL_ITEMS" | jq 'length')
+
+          # Build the markdown section
+          SECTION="## Check: ${NOW_UTC} UTC\n"
+          SECTION+="**Window:** last 6 hours (since \`${SINCE}\`)\n"
+
+          if [ "$TOTAL" -eq 0 ]; then
+            SECTION+="**Total commits:** 0 — no activity\n\n---\n"
+          else
+            # Get unique repos and counts
+            REPOS=$(echo "$ALL_ITEMS" | jq -r '
+              group_by(.repository.full_name) |
+              sort_by(-length) |
+              .[] |
+              {
+                repo: .[0].repository.full_name,
+                count: length,
+                commits: [.[] | {
+                  sha: .sha[0:7],
+                  message: (.commit.message | split("\n")[0] | .[0:80]),
+                  author: .commit.author.name,
+                  date: (.commit.author.date | .[0:16] | gsub("T"; " "))
+                }]
+              }
+            ')
+
+            REPO_COUNT=$(echo "$ALL_ITEMS" | jq '[.[].repository.full_name] | unique | length')
+            SECTION+="**Total commits:** ${TOTAL} across ${REPO_COUNT} repo(s)\n\n"
+
+            while IFS= read -r REPO_BLOCK; do
+              REPO_NAME=$(echo "$REPO_BLOCK" | jq -r '.repo')
+              REPO_COUNT_LOCAL=$(echo "$REPO_BLOCK" | jq -r '.count')
+              SECTION+="### ${REPO_NAME} (${REPO_COUNT_LOCAL} commit(s))\n"
+              while IFS= read -r COMMIT; do
+                SHA=$(echo "$COMMIT" | jq -r '.sha')
+                MSG=$(echo "$COMMIT" | jq -r '.message')
+                AUTHOR=$(echo "$COMMIT" | jq -r '.author')
+                DATE=$(echo "$COMMIT" | jq -r '.date')
+                SECTION+="- \`${SHA}\` — ${MSG} (${AUTHOR}, ${DATE})\n"
+              done < <(echo "$REPO_BLOCK" | jq -c '.commits[]')
+              SECTION+="\n"
+            done < <(echo "$REPOS" | jq -c '.')
+
+            SECTION+="---\n"
+          fi
+
+          printf "%b\n" "$SECTION" >> "$LOG_FILE"
+          echo "Appended check for $NOW_UTC UTC — $TOTAL commits found"
+
+      - name: Commit and push log update
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add commit-activity-log.md
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "chore: commit activity log $(date -u '+%Y-%m-%d %H:%M') UTC"
+            git push origin master
+          fi
