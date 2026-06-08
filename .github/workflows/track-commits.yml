@@ -1,0 +1,84 @@
+name: Track Commit Activity
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'  # Every 6 hours at :00 (00:00, 06:00, 12:00, 18:00 UTC)
+  workflow_dispatch:         # Allow manual runs
+
+permissions:
+  contents: write
+
+jobs:
+  track-commits:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          # Use a PAT (COMMIT_TRACKER_TOKEN) for org-wide repo access.
+          # Falls back to GITHUB_TOKEN which only sees this repo.
+          token: ${{ secrets.COMMIT_TRACKER_TOKEN != '' && secrets.COMMIT_TRACKER_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Collect commit counts
+        env:
+          GH_TOKEN: ${{ secrets.COMMIT_TRACKER_TOKEN != '' && secrets.COMMIT_TRACKER_TOKEN || secrets.GITHUB_TOKEN }}
+          ORG: peak-flow
+        run: |
+          SINCE=$(date -u -d '6 hours ago' '+%Y-%m-%dT%H:%M:%SZ')
+          NOW=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+          DATE_LABEL=$(date -u '+%Y-%m-%d %H:%M UTC')
+
+          # Fetch all org repos; fall back to just this repo if token lacks org access
+          REPOS=$(gh api "/orgs/$ORG/repos?per_page=100" \
+                    --paginate -q '.[].full_name' 2>/dev/null \
+                  || echo "$ORG/peaktrack")
+
+          TOTAL=0
+          TABLE_ROWS=""
+
+          for REPO in $REPOS; do
+            COUNT=$(gh api "/repos/$REPO/commits?since=${SINCE}&per_page=100" \
+                      -q 'length' 2>/dev/null || echo 0)
+            if [ "$COUNT" -gt 0 ]; then
+              TABLE_ROWS="${TABLE_ROWS}| \`${REPO}\` | ${COUNT} |\n"
+              TOTAL=$((TOTAL + COUNT))
+            fi
+          done
+
+          # Build the new log entry (prepend to keep latest at top)
+          ENTRY=$(printf '## %s\n\n**Period:** `%s` → `%s`  \n**Total commits:** %d\n\n' \
+                    "$DATE_LABEL" "$SINCE" "$NOW" "$TOTAL")
+
+          if [ -n "$TABLE_ROWS" ]; then
+            ENTRY="${ENTRY}| Repository | Commits |\n|---|---|\n${TABLE_ROWS}"
+          else
+            ENTRY="${ENTRY}_No commits recorded in this period._\n"
+          fi
+
+          ENTRY="${ENTRY}\n---\n\n"
+
+          # Prepend entry to the log file (create file with header if new)
+          LOG_FILE="commit-activity-log.md"
+
+          if [ ! -f "$LOG_FILE" ]; then
+            printf '# Commit Activity Log\n\nAutomatically updated every 6 hours.\n\n---\n\n' > "$LOG_FILE"
+          fi
+
+          # Insert new entry after the header block (after the first '---' line)
+          HEADER=$(awk '/^---$/{print; exit} {print}' "$LOG_FILE")
+          TAIL=$(awk 'found{print} /^---$/{found=1}' "$LOG_FILE")
+
+          printf '%s\n\n%b%s\n' "$HEADER" "$ENTRY" "$TAIL" > "$LOG_FILE"
+
+      - name: Commit and push report
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add commit-activity-log.md
+          if git diff --staged --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "chore: commit activity report $(date -u '+%Y-%m-%d %H:%M UTC')"
+            git push
+          fi
