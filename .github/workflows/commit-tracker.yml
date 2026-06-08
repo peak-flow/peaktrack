@@ -1,0 +1,86 @@
+name: 6-Hour Commit Tracker
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'   # 00:00, 06:00, 12:00, 18:00 UTC every day
+  workflow_dispatch:          # Allow manual run from the Actions tab
+
+permissions:
+  contents: write
+
+jobs:
+  track-commits:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Fetch commits from last 6 hours
+        env:
+          GH_TOKEN: ${{ secrets.ORG_TOKEN }}
+        run: |
+          SINCE=$(date -u -d '6 hours ago' '+%Y-%m-%dT%H:%M:%SZ')
+          DATE_LABEL=$(date -u '+%Y-%m-%d %H:%M UTC')
+          PAGE=1
+          ALL_ITEMS="[]"
+
+          # Paginate through results (GitHub Search API caps at 1000 results, 100/page)
+          while true; do
+            RESP=$(curl -sf \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github.cloak-preview+json" \
+              "https://api.github.com/search/commits?q=org:peak-flow+committer-date:>$SINCE&per_page=100&page=$PAGE&sort=committer-date&order=desc")
+
+            ITEMS=$(echo "$RESP" | jq '.items')
+            COUNT=$(echo "$ITEMS" | jq 'length')
+            ALL_ITEMS=$(echo "$ALL_ITEMS $ITEMS" | jq -s 'add')
+
+            [ "$COUNT" -lt 100 ] && break
+            PAGE=$((PAGE + 1))
+            [ "$PAGE" -gt 10 ] && break   # safety: max 1000 commits
+          done
+
+          TOTAL=$(echo "$ALL_ITEMS" | jq 'length')
+
+          # Build per-repo breakdown
+          if [ "$TOTAL" -eq 0 ]; then
+            BREAKDOWN="*No commits found in this window.*"
+          else
+            BREAKDOWN=$(echo "$ALL_ITEMS" | jq -r '
+              group_by(.repository.full_name)[] |
+              {
+                repo: .[0].repository.full_name,
+                count: length,
+                lines: [.[] | "  - [`\(.sha[:7])`](\(.html_url)) \(.commit.message | split("\n")[0]) — *\(.commit.author.name)*"]
+              } |
+              "### \(.repo) — \(.count) commit\(if .count == 1 then "" else "s" end)\n\(.lines | join("\n"))"
+            ')
+          fi
+
+          # Initialise the file with a header if it is brand new
+          if [ ! -f commit-log.md ]; then
+            printf '# Commit Activity Log\n\nGenerated automatically every 6 hours by GitHub Actions.\n\n---\n' > commit-log.md
+          fi
+
+          # Prepend the new entry so the newest window is always at the top
+          TMP=$(mktemp)
+          head -5 commit-log.md > "$TMP"   # keep the header block
+          printf '\n## %s\n\n**Total commits (last 6 hours):** %s\n\n%s\n\n---\n' \
+            "$DATE_LABEL" "$TOTAL" "$BREAKDOWN" >> "$TMP"
+          tail -n +6 commit-log.md >> "$TMP"
+          mv "$TMP" commit-log.md
+
+          echo "Logged $TOTAL commits since $SINCE"
+
+      - name: Commit and push log
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add commit-log.md
+          # Only commit when there is actually something new
+          git diff --cached --quiet || \
+            git commit -m "chore: commit log update $(date -u '+%Y-%m-%d %H:%M UTC')"
+          git push
