@@ -1,0 +1,82 @@
+name: Commit Tracker
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'   # every 6 hours: 00:00, 06:00, 12:00, 18:00 UTC
+  workflow_dispatch:          # allow manual trigger
+
+permissions:
+  contents: write
+
+jobs:
+  track-commits:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Count commits across all org repos (last 6 hours)
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          ORG: peak-flow
+        run: |
+          SINCE=$(date -u -d '6 hours ago' '+%Y-%m-%dT%H:%M:%SZ')
+          NOW=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+          DATE_LABEL=$(date -u '+%Y-%m-%d %H:%M UTC')
+
+          echo "Scanning commits from $SINCE to $NOW"
+
+          # Collect all repos (paginated)
+          REPOS=$(gh api "orgs/$ORG/repos?per_page=100" --paginate --jq '.[].name' 2>/dev/null)
+
+          ROWS=""
+          TOTAL=0
+          REPO_COUNT=0
+
+          while IFS= read -r REPO; do
+            [ -z "$REPO" ] && continue
+
+            # Count commits in the window; handle repos with no commits gracefully
+            COUNT=$(gh api "repos/$ORG/$REPO/commits?since=$SINCE&until=$NOW&per_page=100" \
+              --paginate \
+              --jq 'length' 2>/dev/null | paste -sd+ | bc 2>/dev/null || echo 0)
+
+            # Treat empty / non-numeric as 0
+            COUNT=$(echo "$COUNT" | grep -E '^[0-9]+$' || echo 0)
+
+            if [ "$COUNT" -gt 0 ]; then
+              ROWS="${ROWS}| \`${REPO}\` | ${COUNT} |\n"
+              TOTAL=$((TOTAL + COUNT))
+              REPO_COUNT=$((REPO_COUNT + 1))
+            fi
+          done <<< "$REPOS"
+
+          # Build the markdown block for this run
+          if [ "$TOTAL" -eq 0 ]; then
+            BLOCK="## $DATE_LABEL\n\n_No commits in the last 6 hours._\n\n---\n"
+          else
+            BLOCK="## $DATE_LABEL\n\n**$TOTAL commit(s)** across **$REPO_COUNT repo(s)**\n\n| Repository | Commits |\n|---|---|\n${ROWS}\n---\n"
+          fi
+
+          # Prepend the new block so the latest entry is always at the top
+          EXISTING=""
+          if [ -f commit-log.md ]; then
+            EXISTING=$(tail -n +3 commit-log.md)   # skip the header lines
+          fi
+
+          printf "# Commit Activity Log\n\n${BLOCK}${EXISTING}" > commit-log.md
+
+      - name: Commit and push updated log
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add commit-log.md
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "chore: update commit-log $(date -u '+%Y-%m-%d %H:%M UTC')"
+            git push origin HEAD
+          fi
