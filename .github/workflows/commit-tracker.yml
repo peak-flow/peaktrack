@@ -1,0 +1,95 @@
+name: Commit Tracker
+
+# Runs every 6 hours and saves a markdown report of commit activity
+# across all peak-flow repos to commit-reports/
+#
+# REQUIRED: Add a secret named GH_PAT (Settings > Secrets > Actions)
+# Token needs: repo scope (for private repos) or public_repo (public only)
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  track-commits:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_PAT || github.token }}
+
+      - name: Track commits in last 6 hours
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT || github.token }}
+          ORG: peak-flow
+        run: |
+          SINCE=$(date -u -d '6 hours ago' '+%Y-%m-%dT%H:%M:%SZ')
+          NOW_DISPLAY=$(date -u '+%Y-%m-%d %H:%M UTC')
+          REPORT_DIR="commit-reports"
+          mkdir -p "$REPORT_DIR"
+          REPORT_FILE="$REPORT_DIR/$(date -u '+%Y-%m-%d_%H-%M').md"
+
+          SEARCH_QUERY="org:$ORG committer-date:>$SINCE"
+          echo "Searching: $SEARCH_QUERY"
+
+          # Total count from search metadata (not capped)
+          TOTAL=$(gh api "search/commits" \
+            -X GET \
+            -f "q=$SEARCH_QUERY" \
+            --jq '.total_count' 2>/dev/null || echo 0)
+
+          # Per-repo breakdown via paginated search (up to 1000 results)
+          PER_REPO=$(gh api "search/commits" \
+            -X GET \
+            -f "q=$SEARCH_QUERY" \
+            -f "per_page=100" \
+            --paginate \
+            --jq '.items[] | .repository.name' 2>/dev/null \
+            | sort | uniq -c | sort -rn)
+
+          {
+            echo "# Commit Tracker Report"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| **Generated** | $NOW_DISPLAY |"
+            echo "| **Window** | Last 6 hours (since $SINCE) |"
+            echo "| **Total commits** | $TOTAL |"
+            echo ""
+            echo "## Activity by Repository"
+            echo ""
+            echo "| Repository | Commits |"
+            echo "|---|---:|"
+          } > "$REPORT_FILE"
+
+          if [ -z "$PER_REPO" ]; then
+            echo "| _(no activity in this window)_ | — |" >> "$REPORT_FILE"
+          else
+            while read -r COUNT REPO; do
+              echo "| [$REPO](https://github.com/$ORG/$REPO) | $COUNT |" >> "$REPORT_FILE"
+            done <<< "$PER_REPO"
+          fi
+
+          # Keep a latest.md that always reflects the most recent run
+          cp "$REPORT_FILE" "$REPORT_DIR/latest.md"
+
+          echo ""
+          echo "=== Report preview ==="
+          cat "$REPORT_FILE"
+
+      - name: Commit and push report
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add commit-reports/
+          if ! git diff --staged --quiet; then
+            git commit -m "chore: commit tracker $(date -u '+%Y-%m-%d %H:%M UTC')"
+            git push
+          else
+            echo "No new commits found — nothing to save"
+          fi
