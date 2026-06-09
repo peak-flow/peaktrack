@@ -1,0 +1,108 @@
+name: Commit Tracker
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'  # Every 6 hours
+  workflow_dispatch:        # Allow manual runs
+
+permissions:
+  contents: write
+
+jobs:
+  track-commits:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Count commits in last 6 hours
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -e
+
+          SINCE=$(date -u -d '6 hours ago' +"%Y-%m-%dT%H:%M:%SZ")
+          NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          DATE_LABEL=$(date -u +"%Y-%m-%d %H:%M UTC")
+          REPORT_FILE="commit-reports/report.md"
+
+          mkdir -p commit-reports
+
+          # Fetch commits from the last 6 hours via GitHub API
+          COMMITS_JSON=$(gh api \
+            "repos/${REPO}/commits?since=${SINCE}&per_page=100" \
+            --paginate 2>/dev/null || echo "[]")
+
+          COUNT=$(echo "$COMMITS_JSON" | python3 -c "
+          import sys, json
+          data = json.load(sys.stdin)
+          print(len(data))
+          " 2>/dev/null || echo "0")
+
+          AUTHORS=$(echo "$COMMITS_JSON" | python3 -c "
+          import sys, json
+          data = json.load(sys.stdin)
+          authors = {}
+          for c in data:
+              name = (c.get('commit', {}).get('author') or {}).get('name', 'Unknown')
+              authors[name] = authors.get(name, 0) + 1
+          for name, cnt in sorted(authors.items(), key=lambda x: -x[1]):
+              print(f'  - {name}: {cnt}')
+          " 2>/dev/null || echo "  - (none)")
+
+          SAMPLE=$(echo "$COMMITS_JSON" | python3 -c "
+          import sys, json
+          data = json.load(sys.stdin)
+          for c in data[:5]:
+              sha = c.get('sha', '')[:7]
+              msg = (c.get('commit', {}).get('message') or '').splitlines()[0][:72]
+              print(f'  - \`{sha}\` {msg}')
+          " 2>/dev/null || echo "")
+
+          # Build the new entry
+          ENTRY="## ${DATE_LABEL}
+
+          **Repository:** \`${REPO}\`
+          **Window:** ${SINCE} → ${NOW}
+          **Total commits:** ${COUNT}
+
+          ### Commits by author
+          ${AUTHORS}
+          "
+
+          if [ -n "$SAMPLE" ]; then
+            ENTRY="${ENTRY}
+          ### Recent commits (up to 5)
+          ${SAMPLE}
+          "
+          fi
+
+          ENTRY="${ENTRY}
+          ---
+          "
+
+          # Create or prepend to the report
+          if [ -f "$REPORT_FILE" ]; then
+            EXISTING=$(cat "$REPORT_FILE")
+            printf '# Commit Activity Report\n\n%s\n\n%s\n' "$ENTRY" "$EXISTING" > "$REPORT_FILE"
+          else
+            printf '# Commit Activity Report\n\n%s\n' "$ENTRY" > "$REPORT_FILE"
+          fi
+
+          echo "Logged ${COUNT} commits for ${REPO}"
+
+      - name: Commit report
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add commit-reports/report.md
+          # Only commit if there's something new
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "chore: commit activity report $(date -u +"%Y-%m-%d %H:%M UTC")"
+            git push
+          fi
