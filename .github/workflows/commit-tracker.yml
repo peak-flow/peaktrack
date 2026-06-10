@@ -1,0 +1,72 @@
+name: Commit Tracker
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  track-commits:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Count commits in last 6 hours
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          SINCE=$(date -u -d '6 hours ago' +%Y-%m-%dT%H:%M:%SZ)
+          NOW=$(date -u +"%Y-%m-%d %H:%M UTC")
+          ORG="peak-flow"
+
+          # Try org repo list, fall back to known repos
+          REPOS=$(gh api "orgs/$ORG/repos?per_page=100" --paginate \
+            --jq '.[].name' 2>/dev/null)
+          if [ -z "$REPOS" ]; then
+            REPOS="peaktrack"
+          fi
+
+          TABLE_ROWS=""
+          TOTAL=0
+
+          for REPO in $REPOS; do
+            # Paginate to handle >100 commits
+            PAGE=1
+            COUNT=0
+            while true; do
+              BATCH=$(gh api \
+                "repos/$ORG/$REPO/commits?since=$SINCE&per_page=100&page=$PAGE" \
+                --jq 'length' 2>/dev/null || echo "0")
+              COUNT=$((COUNT + BATCH))
+              [ "$BATCH" -lt 100 ] && break
+              PAGE=$((PAGE + 1))
+            done
+            TABLE_ROWS="${TABLE_ROWS}\n| ${ORG}/${REPO} | ${COUNT} |"
+            TOTAL=$((TOTAL + COUNT))
+          done
+
+          # Create file with header if it doesn't exist
+          if [ ! -f commit-log.md ]; then
+            printf '# GitHub Commit Log (every 6 hours)\n\n' > commit-log.md
+          fi
+
+          # Append new entry
+          printf '\n## %s\n\n' "$NOW" >> commit-log.md
+          printf '| Repository | Commits (last 6h) |\n' >> commit-log.md
+          printf '|---|---|\n' >> commit-log.md
+          printf "$TABLE_ROWS\n" >> commit-log.md
+          printf '\n**Total: %d commits**\n' "$TOTAL" >> commit-log.md
+
+      - name: Commit and push log
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add commit-log.md
+          git diff --staged --quiet && echo "No changes" && exit 0
+          git commit -m "chore: commit log $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          git push
