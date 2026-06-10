@@ -1,0 +1,136 @@
+name: Commit Tracker
+
+on:
+  schedule:
+    # Every 6 hours: 00:00, 06:00, 12:00, 18:00 UTC
+    - cron: '0 */6 * * *'
+  workflow_dispatch: # allow manual runs
+
+permissions:
+  contents: write
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.COMMIT_TRACKER_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Collect commits and update tracker
+        env:
+          GH_TOKEN: ${{ secrets.COMMIT_TRACKER_TOKEN || secrets.GITHUB_TOKEN }}
+          ORG: peak-flow
+        run: |
+          python3 << 'PYEOF'
+          import os, json, subprocess, sys
+          from datetime import datetime, timezone, timedelta
+          from urllib.request import urlopen, Request
+          from urllib.error import HTTPError
+
+          token   = os.environ["GH_TOKEN"]
+          org     = os.environ["ORG"]
+          now     = datetime.now(timezone.utc)
+          since   = now - timedelta(hours=6)
+          since_s = since.strftime("%Y-%m-%dT%H:%M:%SZ")
+          now_s   = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+          headers = {
+              "Authorization": f"Bearer {token}",
+              "Accept": "application/vnd.github.cloak-preview+json",
+              "X-GitHub-Api-Version": "2022-11-28",
+          }
+
+          commits = []
+          page = 1
+          while True:
+              url = (
+                  f"https://api.github.com/search/commits"
+                  f"?q=org:{org}+committer-date:>={since_s}"
+                  f"&sort=committer-date&order=desc&per_page=100&page={page}"
+              )
+              req = Request(url, headers=headers)
+              try:
+                  with urlopen(req) as r:
+                      data = json.loads(r.read())
+              except HTTPError as e:
+                  print(f"GitHub API error: {e.code} {e.reason}", file=sys.stderr)
+                  data = {"items": [], "total_count": 0}
+
+              batch = data.get("items", [])
+              commits.extend(batch)
+              if len(batch) < 100:
+                  break
+              page += 1
+
+          total = len(commits)
+
+          # Group by repo
+          repos = {}
+          for c in commits:
+              repo_name = c["repository"]["full_name"]
+              repos.setdefault(repo_name, {"count": 0, "authors": set(), "commits": []})
+              repos[repo_name]["count"] += 1
+              author_name = c["commit"]["author"].get("name") or c["commit"]["committer"].get("name") or "unknown"
+              repos[repo_name]["authors"].add(author_name)
+              repos[repo_name]["commits"].append(c)
+
+          # Build markdown section
+          lines = []
+          heading_date = now.strftime("%Y-%m-%d %H:%M UTC")
+          window = f"{since.strftime('%Y-%m-%d %H:%M')} → {now.strftime('%Y-%m-%d %H:%M')} UTC"
+          lines.append(f"\n## {heading_date}  *(window: {window})*\n")
+
+          if total == 0:
+              lines.append("**No commits in this window.**\n")
+          else:
+              lines.append(f"**Total commits: {total}**\n")
+              lines.append("")
+              lines.append("| Repo | Commits | Authors |")
+              lines.append("|------|---------|---------|")
+              for repo_name, info in sorted(repos.items(), key=lambda x: -x[1]["count"]):
+                  authors_str = ", ".join(sorted(info["authors"]))
+                  private_flag = " *(private)*" if commits[0]["repository"].get("private") else ""
+                  lines.append(f"| [{repo_name}](https://github.com/{repo_name}) | {info['count']} | {authors_str} |")
+              lines.append("")
+              lines.append("### Commit details\n")
+              for c in commits:
+                  repo_name  = c["repository"]["full_name"]
+                  sha        = c["sha"][:7]
+                  msg        = c["commit"]["message"].split("\n")[0][:80]
+                  author     = c["commit"]["author"].get("name", "unknown")
+                  date_raw   = c["commit"]["committer"]["date"]
+                  # Normalise to UTC display
+                  dt = datetime.fromisoformat(date_raw.replace("Z", "+00:00"))
+                  dt_utc = dt.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+                  url = c["html_url"]
+                  lines.append(f"- `{sha}` — *{msg}* — {author} — {dt_utc}  ")
+                  lines.append(f"  [{repo_name}]({url})")
+
+          lines.append("\n---\n")
+          section = "\n".join(lines)
+
+          tracker = "commit-tracker.md"
+          with open(tracker, "r") as f:
+              content = f.read()
+
+          # Append before the final newline / at end
+          content = content.rstrip("\n") + "\n" + section
+          with open(tracker, "w") as f:
+              f.write(content)
+
+          print(f"Appended snapshot: {total} commits across {len(repos)} repos.")
+          PYEOF
+
+      - name: Commit and push
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add commit-tracker.md
+          if git diff --cached --quiet; then
+            echo "Nothing to commit."
+          else
+            TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+            git commit -m "chore: commit snapshot ${TIMESTAMP}"
+            git push
+          fi
