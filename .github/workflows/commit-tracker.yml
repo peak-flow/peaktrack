@@ -1,0 +1,93 @@
+name: Commit Tracker
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+
+jobs:
+  track-commits:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+
+      - name: Count commits in last 6 hours
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+          GH_USER: peak-flow
+        run: |
+          SINCE=$(date -u -d '6 hours ago' '+%Y-%m-%dT%H:%M:%SZ')
+          NOW_LABEL=$(date -u '+%Y-%m-%d %H:%M UTC')
+
+          echo "Searching for commits by ${GH_USER} since ${SINCE}"
+
+          # GitHub commit search API — needs preview Accept header
+          RESPONSE=$(curl -s \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github.cloak-preview+json" \
+            "https://api.github.com/search/commits?q=author:${GH_USER}+author-date:>=${SINCE}&per_page=100&sort=author-date&order=desc")
+
+          TOTAL=$(echo "$RESPONSE" | jq -r '.total_count // 0')
+
+          REPO_TABLE=$(echo "$RESPONSE" | jq -r '
+            [.items[] | .repository.full_name] |
+            group_by(.) |
+            map({repo: .[0], count: length}) |
+            sort_by(-.count) |
+            .[] |
+            "| \(.repo) | \(.count) |"
+          ')
+
+          {
+            echo "## ${NOW_LABEL}"
+            echo ""
+            echo "**Total commits in last 6 hours:** ${TOTAL}"
+            echo ""
+            if [ "$TOTAL" -gt "0" ]; then
+              echo "| Repository | Commits |"
+              echo "| --- | --- |"
+              echo "$REPO_TABLE"
+              if [ "$TOTAL" -gt "100" ]; then
+                echo ""
+                echo "> Showing first 100 of ${TOTAL} total commits."
+              fi
+            else
+              echo "_No commits found in the last 6 hours._"
+            fi
+            echo ""
+            echo "---"
+            echo ""
+          } > /tmp/new_entry.md
+
+          LOG_FILE="commit-log.md"
+
+          if [ ! -f "$LOG_FILE" ]; then
+            {
+              echo "# Commit Activity Log"
+              echo ""
+              echo "> Auto-updated every 6 hours. Tracks commits by \`${GH_USER}\` across all repositories."
+              echo "> For private repo coverage add a \`GH_PAT\` secret (classic PAT with \`repo\` scope)."
+              echo ""
+              echo "---"
+              echo ""
+            } > "$LOG_FILE"
+          fi
+
+          # Prepend new entry after the 6-line header block
+          head -n 6 "$LOG_FILE" > /tmp/log_header.md
+          tail -n +7 "$LOG_FILE" > /tmp/log_body.md
+          cat /tmp/log_header.md /tmp/new_entry.md /tmp/log_body.md > "$LOG_FILE"
+
+      - name: Commit and push log
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add commit-log.md
+          git diff --staged --quiet && echo "Nothing to commit" && exit 0
+          git commit -m "chore: commit activity log $(date -u '+%Y-%m-%d %H:%M UTC')"
+          git push origin master
