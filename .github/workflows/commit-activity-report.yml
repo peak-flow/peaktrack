@@ -1,0 +1,71 @@
+name: Commit Activity Report
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'   # every 6 hours at :00
+  workflow_dispatch:          # allow manual runs
+
+permissions:
+  contents: write
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate commit activity report
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          SINCE=$(date -u -d '6 hours ago' +%Y-%m-%dT%H:%M:%SZ)
+          NOW=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
+
+          # Search commits across the org in the last 6 hours
+          RESPONSE=$(gh api "search/commits?q=org:peak-flow+committer-date:>=${SINCE}&per_page=100" \
+            -H "Accept: application/vnd.github.cloak-preview+json" 2>/dev/null \
+            || echo '{"total_count":0,"items":[]}')
+
+          TOTAL_COUNT=$(echo "$RESPONSE" | jq '.total_count // 0')
+
+          # Count commits per repository
+          REPO_LINES=$(echo "$RESPONSE" | jq -r '.items[].repository.full_name' | sort | uniq -c | sort -rn)
+          UNIQUE_REPOS=$(echo "$RESPONSE" | jq -r '.items[].repository.full_name' | sort -u | grep -c . || echo 0)
+
+          # Build markdown table rows
+          TABLE_ROWS=""
+          if [ -n "$REPO_LINES" ]; then
+            while IFS= read -r line; do
+              COUNT=$(echo "$line" | awk '{print $1}')
+              REPO=$(echo "$line" | awk '{print $2}')
+              TABLE_ROWS="${TABLE_ROWS}| ${REPO} | ${COUNT} |\n"
+            done <<< "$REPO_LINES"
+          else
+            TABLE_ROWS="| _(no commits)_ | 0 |\n"
+            UNIQUE_REPOS=0
+          fi
+
+          # Append new section to commit-activity.md
+          {
+            echo ""
+            echo "## ${NOW}"
+            echo ""
+            echo "| Repository | Commits |"
+            echo "|---|---|"
+            printf "%b" "${TABLE_ROWS}"
+            echo ""
+            echo "**Total: ${TOTAL_COUNT} commits across ${UNIQUE_REPOS} repos**"
+            echo ""
+            echo "---"
+          } >> commit-activity.md
+
+          echo "Report appended: ${TOTAL_COUNT} commits across ${UNIQUE_REPOS} repos since ${SINCE}"
+
+      - name: Commit and push report
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add commit-activity.md
+          git diff --staged --quiet || \
+            git commit -m "chore: commit activity report $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          git push
