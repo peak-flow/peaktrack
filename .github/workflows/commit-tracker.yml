@@ -1,0 +1,118 @@
+name: Commit Tracker
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'   # every 6 hours: 00:00, 06:00, 12:00, 18:00 UTC
+  workflow_dispatch:          # allow manual trigger from GitHub Actions UI
+
+permissions:
+  contents: write
+
+jobs:
+  track:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Track commits across peak-flow org
+        env:
+          # GH_ORG_TOKEN: PAT with repo scope for private repos (set in repo secrets)
+          # Falls back to GITHUB_TOKEN which only reads public repos
+          GH_TOKEN: ${{ secrets.GH_ORG_TOKEN != '' && secrets.GH_ORG_TOKEN || github.token }}
+        run: |
+          python3 << 'PYEOF'
+          import subprocess, json, os
+          from datetime import datetime, timezone, timedelta
+
+          since_dt = datetime.now(timezone.utc) - timedelta(hours=6)
+          since = since_dt.strftime('%Y-%m-%dT%H:%M:%SZ')
+          now_dt = datetime.now(timezone.utc)
+          now = now_dt.strftime('%Y-%m-%dT%H:%M:%SZ')
+          now_display = now_dt.strftime('%Y-%m-%d %H:%M')
+
+          def gh_api(endpoint):
+              r = subprocess.run(['gh', 'api', endpoint], capture_output=True, text=True)
+              if r.returncode != 0:
+                  print(f'  API error for {endpoint}: {r.stderr.strip()}', flush=True)
+                  return None
+              try:
+                  return json.loads(r.stdout)
+              except Exception:
+                  return None
+
+          print(f'Scanning for pushes since {since}...', flush=True)
+
+          data = gh_api(f'search/repositories?q=org:peak-flow+pushed:>{since}&per_page=50')
+          repos = [r['name'] for r in data.get('items', [])] if data else []
+          print(f'Found {len(repos)} repo(s) with recent pushes.', flush=True)
+
+          rows = []
+          total_commits = 0
+
+          for repo in repos:
+              commits = gh_api(f'repos/peak-flow/{repo}/commits?since={since}&per_page=100')
+              if commits and isinstance(commits, list) and len(commits) > 0:
+                  count = len(commits)
+                  try:
+                      author = commits[0]['commit']['author']['name']
+                  except (KeyError, IndexError):
+                      author = 'unknown'
+                  rows.append((repo, count, author))
+                  total_commits += count
+                  print(f'  {repo}: {count} commit(s)', flush=True)
+
+          rows.sort(key=lambda x: -x[1])
+
+          lines = [
+              f'## Commit Report — {now_display} UTC',
+              f'**Period:** Last 6 hours (from `{since}` to `{now}`)',
+              f'**Total commits:** {total_commits} across {len(rows)} repo(s)',
+              '',
+          ]
+
+          if rows:
+              lines.append('| Repository | Commits | Last Commit Author |')
+              lines.append('|---|---|---|')
+              for repo, count, author in rows:
+                  lines.append(f'| `{repo}` | {count} | {author} |')
+          else:
+              lines.append('*No activity in this period.*')
+
+          lines += ['', '---', '']
+          new_section = '\n'.join(lines) + '\n'
+
+          header = (
+              '# GitHub Commit Tracker — peak-flow org\n\n'
+              'Auto-updated every 6 hours via GitHub Actions. '
+              'Tracks all repositories in the `peak-flow` org.\n\n'
+          )
+
+          tracker_path = 'commit-tracker.md'
+          if os.path.exists(tracker_path):
+              with open(tracker_path) as f:
+                  existing = f.read()
+              # Skip the 4-line header block (title, blank, description, blank)
+              idx = existing.find('\n\n', existing.find('\n\n') + 2) + 2
+              body = existing[idx:] if idx > 2 else ''
+              updated = header + new_section + body
+          else:
+              updated = header + new_section
+
+          with open(tracker_path, 'w') as f:
+              f.write(updated)
+
+          print(f'Report written: {total_commits} total commits across {len(rows)} repo(s).', flush=True)
+          PYEOF
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add commit-tracker.md
+          if git diff --cached --quiet; then
+            echo "No new commits found — nothing to update."
+          else
+            git commit -m "chore: commit tracker update $(date -u '+%Y-%m-%d %H:%M') UTC"
+            git push
+          fi
