@@ -1,0 +1,82 @@
+name: 6-Hour Commit Log
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'   # every 6 hours at :00
+  workflow_dispatch:          # allow manual runs
+
+permissions:
+  contents: write
+
+jobs:
+  log-commits:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Count commits and update log
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          SINCE=$(date -u -d "6 hours ago" +"%Y-%m-%dT%H:%M:%SZ")
+          LABEL=$(date -u +"%Y-%m-%d %H:%M UTC")
+
+          REPOS=(
+            "peak-flow/peaktrack"
+          )
+
+          TOTAL=0
+          TABLE_ROWS=""
+
+          for REPO in "${REPOS[@]}"; do
+            OWNER="${REPO%%/*}"
+            NAME="${REPO##*/}"
+
+            COUNT=$(gh api \
+              "repos/${OWNER}/${NAME}/commits?since=${SINCE}&per_page=100" \
+              --paginate \
+              --jq 'length' 2>/dev/null | awk '{s+=$1} END {print s}' || echo 0)
+
+            TOTAL=$((TOTAL + COUNT))
+            TABLE_ROWS="${TABLE_ROWS}| ${REPO} | ${COUNT} |\n"
+          done
+
+          LOG_FILE="commit-log.md"
+
+          # Create file with header if it doesn't exist
+          if [ ! -f "$LOG_FILE" ]; then
+            cat > "$LOG_FILE" <<'HEADER'
+          # GitHub Commit Log
+
+          Auto-generated every 6 hours. Tracks commits per repo over the preceding 6-hour window.
+
+          ---
+          HEADER
+          fi
+
+          # Append new entry
+          printf "\n## %s — Commit Check\n\n" "$LABEL" >> "$LOG_FILE"
+          printf "| Repo | Commits (last 6h) |\n" >> "$LOG_FILE"
+          printf "|------|:-----------------:|\n" >> "$LOG_FILE"
+          printf "${TABLE_ROWS}" >> "$LOG_FILE"
+          printf "\n**Total commits:** %d\n\n---\n" "$TOTAL" >> "$LOG_FILE"
+
+          echo "Logged ${TOTAL} total commit(s) across ${#REPOS[@]} repo(s) since ${SINCE}"
+
+      - name: Commit and push log
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add commit-log.md
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "chore: update commit-log $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            git push
+          fi
