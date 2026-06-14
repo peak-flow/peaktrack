@@ -1,0 +1,97 @@
+name: Commit Activity Monitor
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'   # every 6 hours: 00:00, 06:00, 12:00, 18:00 UTC
+  workflow_dispatch:          # allow manual trigger from the Actions tab
+
+jobs:
+  check-commits:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: claude/kind-pascal-z10d1f
+          token: ${{ secrets.ORG_PAT }}
+
+      - name: Fetch commits and update log
+        env:
+          GH_TOKEN: ${{ secrets.ORG_PAT }}
+        run: |
+          set -euo pipefail
+
+          NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          SINCE=$(date -u -d "6 hours ago" +"%Y-%m-%dT%H:%M:%SZ")
+
+          echo "Checking commits since $SINCE ..."
+
+          # GitHub search API – needs a PAT with read:org + repo scopes
+          QUERY="org:peak-flow+committer-date:>=${SINCE}"
+          URL="https://api.github.com/search/commits?q=${QUERY}&sort=committer-date&order=desc&per_page=100"
+
+          PAGE1=$(curl -sf -H "Authorization: Bearer $GH_TOKEN" \
+                        -H "Accept: application/vnd.github+json" \
+                        -H "X-GitHub-Api-Version: 2022-11-28" \
+                        "$URL" || echo '{"total_count":0,"items":[]}')
+
+          TOTAL=$(echo "$PAGE1" | jq '.total_count // 0')
+          ITEMS="$PAGE1"
+
+          # fetch page 2 if needed
+          if [ "$TOTAL" -gt 100 ]; then
+            PAGE2=$(curl -sf -H "Authorization: Bearer $GH_TOKEN" \
+                          -H "Accept: application/vnd.github+json" \
+                          -H "X-GitHub-Api-Version: 2022-11-28" \
+                          "${URL}&page=2" || echo '{"items":[]}')
+            ITEMS=$(echo "$PAGE1 $PAGE2" | jq -s '{
+              total_count: .[0].total_count,
+              items: (.[0].items + .[1].items)
+            }')
+          fi
+
+          # Build per-repo summary
+          REPO_TABLE=$(echo "$ITEMS" | jq -r '
+            .items
+            | group_by(.repository.full_name)
+            | map({
+                repo:   .[0].repository.full_name,
+                count:  length,
+                latest: .[0].commit.message | split("\n")[0] | .[0:80]
+              })
+            | sort_by(-.count)
+            | .[]
+            | "| \(.repo) | \(.count) | \(.latest) |"
+          ')
+
+          # Build the new section
+          if [ "$TOTAL" -eq 0 ]; then
+            SECTION="## ${NOW} — window: last 6 hours (since ${SINCE})\n\n**Total commits: 0**\n\nNo commits in this window.\n"
+          else
+            HEADER="## ${NOW} — window: last 6 hours (since ${SINCE})\n\n**Total commits: ${TOTAL}**\n\n| Repo | Commits | Latest message |\n|------|---------|----------------|"
+            SECTION="${HEADER}\n${REPO_TABLE}\n"
+          fi
+
+          # Prepend new section into existing file (after the fixed header block)
+          FIXED_HEADER=$(head -5 commit-activity.md)
+          REST=$(tail -n +6 commit-activity.md)
+          printf '%s\n\n---\n\n%b\n---\n\n%s\n' \
+            "$FIXED_HEADER" "$SECTION" "$REST" > commit-activity.md
+
+          # Stamp the footer
+          sed -i "s/^\*Last updated:.*$/\*Last updated: ${NOW}\*/" commit-activity.md
+
+          echo "Done. Total commits in window: $TOTAL"
+
+      - name: Commit and push
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add commit-activity.md
+          # Only commit if there are changes
+          git diff --cached --quiet || \
+            git commit -m "chore: update commit-activity log $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          git push origin claude/kind-pascal-z10d1f
