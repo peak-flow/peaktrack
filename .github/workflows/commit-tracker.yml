@@ -1,0 +1,79 @@
+name: Commit Tracker
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  track-commits:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch commits from last 6 hours and update log
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          SINCE=$(date -u -d "6 hours ago" +"%Y-%m-%dT%H:%M:%SZ")
+          NOW=$(date -u +"%Y-%m-%d %H:%M UTC")
+
+          # Repos to track (space-separated owner/repo pairs)
+          REPOS="peak-flow/peaktrack"
+
+          # Create file with header if it doesn't exist
+          if [ ! -f commit-log.md ]; then
+            cat > commit-log.md << 'EOF'
+          # GitHub Commit Log
+
+          Commits tracked every 6 hours across monitored repositories.
+
+          ---
+
+          EOF
+          fi
+
+          # Build the log entry for this run
+          ENTRY="## $NOW\n\n"
+          TOTAL=0
+
+          for REPO in $REPOS; do
+            OWNER=$(echo "$REPO" | cut -d'/' -f1)
+            REPONAME=$(echo "$REPO" | cut -d'/' -f2)
+
+            RESPONSE=$(curl -sf \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/$OWNER/$REPONAME/commits?since=$SINCE&per_page=100" \
+              || echo "[]")
+
+            COUNT=$(echo "$RESPONSE" | jq 'length')
+            TOTAL=$((TOTAL + COUNT))
+
+            ENTRY+="- **$REPO**: $COUNT commit(s)\n"
+
+            if [ "$COUNT" -gt 0 ]; then
+              while IFS= read -r line; do
+                ENTRY+="$line\n"
+              done < <(echo "$RESPONSE" | jq -r \
+                '.[] | "  - `\(.sha[0:7])` \(.commit.message | split("\n")[0]) — \(.commit.author.name)"')
+            fi
+
+            ENTRY+="\n"
+          done
+
+          printf "%b" "$ENTRY" >> commit-log.md
+
+          echo "TOTAL=$TOTAL" >> "$GITHUB_ENV"
+
+      - name: Commit updated log
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add commit-log.md
+          git diff --staged --quiet || git commit -m "chore: commit tracker update [skip ci]"
+          git push
