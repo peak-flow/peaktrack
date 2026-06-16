@@ -1,0 +1,113 @@
+name: Commit Tracker
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  track-commits:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch commits from last 6 hours
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ORG="peak-flow"
+          SINCE=$(date -u -d '6 hours ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v-6H +%Y-%m-%dT%H:%M:%SZ)
+          NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          LOG_FILE="commit-log.md"
+
+          echo "Checking commits since $SINCE"
+
+          # List all repos in the org (up to 100)
+          REPOS=$(gh api "orgs/$ORG/repos?per_page=100&sort=updated" --jq '.[].name' 2>/dev/null || echo "peaktrack")
+
+          TOTAL=0
+          REPORT=""
+
+          for REPO in $REPOS; do
+            # Get commits since 6h ago
+            COMMITS=$(gh api "repos/$ORG/$REPO/commits?since=$SINCE&per_page=100" \
+              --jq '.[] | "- \(.sha[0:7]) **\(.commit.author.name)**: \(.commit.message | split("\n")[0])"' \
+              2>/dev/null || true)
+
+            COUNT=$(echo "$COMMITS" | grep -c '^-' 2>/dev/null || echo 0)
+            [ -z "$COMMITS" ] && COUNT=0
+
+            if [ "$COUNT" -gt 0 ]; then
+              TOTAL=$((TOTAL + COUNT))
+              REPORT="${REPORT}
+          ### \`$ORG/$REPO\` — $COUNT commit(s)
+
+          $COMMITS
+          "
+            fi
+          done
+
+          # Build the new log entry
+          ENTRY="## Check: $NOW
+
+          **Window:** $SINCE → $NOW
+          **Total commits:** $TOTAL across $(echo "$REPOS" | wc -w | tr -d ' ') repo(s) checked
+          "
+
+          if [ "$TOTAL" -gt 0 ]; then
+            ENTRY="${ENTRY}${REPORT}"
+          else
+            ENTRY="${ENTRY}
+          _No commits found in this window._
+          "
+          fi
+
+          ENTRY="${ENTRY}
+          ---
+          "
+
+          # Create file with header if it doesn't exist
+          if [ ! -f "$LOG_FILE" ]; then
+            cat > "$LOG_FILE" <<'HEADER'
+          # Commit Activity Log
+
+          Auto-generated every 6 hours by the Commit Tracker workflow.
+          Tracks all commits across `peak-flow` repositories.
+
+          ---
+
+          HEADER
+          fi
+
+          # Prepend the new entry after the header (insert after the first --- line)
+          HEADER_END=$(grep -n '^---' "$LOG_FILE" | head -1 | cut -d: -f1)
+          if [ -n "$HEADER_END" ]; then
+            HEAD=$(head -n "$HEADER_END" "$LOG_FILE")
+            TAIL=$(tail -n +$((HEADER_END + 1)) "$LOG_FILE")
+            printf '%s\n\n%s\n%s' "$HEAD" "$ENTRY" "$TAIL" > "$LOG_FILE"
+          else
+            printf '%s\n\n%s' "$(cat "$LOG_FILE")" "$ENTRY" > "$LOG_FILE"
+          fi
+
+          echo "total=$TOTAL" >> "$GITHUB_OUTPUT"
+          echo "since=$SINCE" >> "$GITHUB_OUTPUT"
+        id: check
+
+      - name: Commit and push log
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add commit-log.md
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "chore: commit tracker update $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            git push origin HEAD
+          fi
