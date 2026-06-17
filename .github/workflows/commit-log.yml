@@ -1,0 +1,36 @@
+name: GitHub Commit Log
+
+on:
+  schedule:
+    # Every 6 hours: 00:05, 06:05, 12:05, 18:05 UTC
+    - cron: '5 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  log-commits:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Always write the log to master so history accumulates on one branch.
+          # Change this if you want the log on a different branch.
+          ref: master
+          token: ${{ secrets.PEAK_FLOW_PAT }}
+
+      - name: Check commits and update log
+        env:
+          GH_TOKEN: ${{ secrets.PEAK_FLOW_PAT }}
+        run: bash scripts/check-commits.sh
+
+      - name: Commit and push log
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add github-commit-log.md
+          git diff --staged --quiet && echo "No changes to commit." && exit 0
+          git commit -m "chore: github commit log $(date -u +'%Y-%m-%d %H:%M UTC')"
+          git push
