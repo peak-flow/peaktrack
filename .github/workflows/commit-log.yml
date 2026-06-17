@@ -1,0 +1,58 @@
+name: Commit Activity Log
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  log-commits:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Fetch and log commits from last 6 hours
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          REPO="peak-flow/peaktrack"
+          SINCE=$(date -u -d '6 hours ago' +%Y-%m-%dT%H:%M:%SZ)
+          NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+          COMMITS=$(gh api \
+            "repos/${REPO}/commits?since=${SINCE}&per_page=100" \
+            --jq '.[] | "- \(.sha[0:7]) | \(.commit.author.name) | \(.commit.message | split("\n")[0])"')
+
+          COUNT=$(echo "$COMMITS" | grep -c '.' || true)
+          if [ -z "$COMMITS" ]; then
+            COUNT=0
+          fi
+
+          {
+            echo ""
+            echo "## Check: ${NOW}"
+            echo ""
+            echo "**Repo:** \`${REPO}\`  "
+            echo "**Window:** ${SINCE} → ${NOW}  "
+            echo "**Commits:** ${COUNT}"
+            echo ""
+            if [ "$COUNT" -eq 0 ]; then
+              echo "_No commits in this window._"
+            else
+              echo "$COMMITS"
+            fi
+            echo ""
+            echo "---"
+          } >> commit-log.md
+
+      - name: Commit log update
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add commit-log.md
+          git diff --staged --quiet || git commit -m "chore: update commit log $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          git push
