@@ -1,0 +1,94 @@
+name: Commit Activity Log
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  log-commits:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check commits and update log
+        env:
+          # GH_PAT must be a Personal Access Token with `repo` scope, added as a
+          # repository secret. Without it only public repos are queryable.
+          GH_TOKEN: ${{ secrets.GH_PAT || github.token }}
+          OWNER: peak-flow
+        run: |
+          set -euo pipefail
+
+          SINCE=$(date -u -d '6 hours ago' '+%Y-%m-%dT%H:%M:%SZ')
+          NOW=$(date -u '+%Y-%m-%d %H:%M UTC')
+          CUTOFF=$(date -u -d '30 days ago' '+%Y-%m-%dT%H:%M:%SZ')
+
+          # Fetch repos owned by peak-flow updated in the last 30 days
+          REPOS=$(curl -sf \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/user/repos?per_page=100&sort=updated&direction=desc&type=owner" \
+            | jq -r --arg cutoff "$CUTOFF" \
+              '.[] | select(.pushed_at > $cutoff) | .name' \
+            || true)
+
+          TOTAL=0
+          REPO_LINES=""
+
+          while IFS= read -r REPO; do
+            [ -z "$REPO" ] && continue
+            COUNT=$(curl -sf \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${OWNER}/${REPO}/commits?since=${SINCE}&per_page=100" \
+              | jq 'if type == "array" then length else 0 end' 2>/dev/null || echo 0)
+            if [ "${COUNT:-0}" -gt 0 ]; then
+              TOTAL=$((TOTAL + COUNT))
+              REPO_LINES="${REPO_LINES}"$'\n'"- **${REPO}**: ${COUNT} commit(s)"
+            fi
+          done <<< "$REPOS"
+
+          # Build the new log entry
+          {
+            echo "## ${NOW}"
+            echo ""
+            if [ "$TOTAL" -gt 0 ]; then
+              echo "**Total commits (last 6h):** ${TOTAL}"
+              echo ""
+              echo "### Repos with activity"
+              printf "%s\n" "${REPO_LINES}"
+            else
+              echo "No commits in this 6-hour window."
+            fi
+            echo ""
+            echo "---"
+            echo ""
+          } > /tmp/new-entry.md
+
+          # Prepend new entry to existing file, or create file with header
+          if [ -f commit-log.md ]; then
+            cat /tmp/new-entry.md commit-log.md > /tmp/merged.md
+            mv /tmp/merged.md commit-log.md
+          else
+            {
+              echo "# Commit Activity Log"
+              echo ""
+              echo "Auto-updated every 6 hours by GitHub Actions."
+              echo "Covers all \`${OWNER}\` repos active in the last 30 days."
+              echo ""
+              echo "---"
+              echo ""
+              cat /tmp/new-entry.md
+            } > commit-log.md
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add commit-log.md
+          git diff --staged --quiet && echo "No changes to commit." && exit 0
+          git commit -m "chore: commit log ${NOW}"
+          git push
