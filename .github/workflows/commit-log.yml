@@ -1,0 +1,101 @@
+name: Commit Activity Log
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'   # every 6 hours: 00:00, 06:00, 12:00, 18:00 UTC
+  workflow_dispatch:         # allow manual runs
+
+permissions:
+  contents: write
+
+jobs:
+  log-commits:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch commits from last 6 hours and append to log
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ORG: peak-flow
+        run: |
+          set -euo pipefail
+
+          NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          SINCE=$(date -u -d '6 hours ago' +%Y-%m-%dT%H:%M:%SZ)
+          LABEL=$(date -u -d '6 hours ago' +'%Y-%m-%d %H:%M UTC')
+          NOW_LABEL=$(date -u +'%Y-%m-%d %H:%M UTC')
+
+          # Collect all repos in the org
+          REPOS=$(gh api "orgs/${ORG}/repos?per_page=100&type=all" --jq '.[].full_name')
+
+          declare -A REPO_COUNT
+          declare -a DETAIL_ROWS
+
+          TOTAL=0
+
+          for REPO in $REPOS; do
+            OWNER=$(echo "$REPO" | cut -d/ -f1)
+            REPONAME=$(echo "$REPO" | cut -d/ -f2)
+
+            # Get commits since SINCE for default branch
+            COMMITS=$(gh api \
+              "repos/${REPO}/commits?since=${SINCE}&per_page=100" \
+              --jq '.[] | "\(.sha[0:7])|\(.commit.message | split("\n")[0])|\(.commit.author.name)|\(.commit.author.date)"' \
+              2>/dev/null || true)
+
+            COUNT=$(echo "$COMMITS" | grep -c . || true)
+
+            if [ "$COUNT" -gt 0 ]; then
+              REPO_COUNT["$REPO"]=$COUNT
+              TOTAL=$((TOTAL + COUNT))
+
+              while IFS= read -r line; do
+                SHA=$(echo "$line" | cut -d'|' -f1)
+                MSG=$(echo "$line" | cut -d'|' -f2)
+                AUTHOR=$(echo "$line" | cut -d'|' -f3)
+                DATE=$(echo "$line" | cut -d'|' -f4 | sed 's/T/ /' | cut -c1-16)
+                DETAIL_ROWS+=("| \`${SHA}\` | ${REPO} | ${MSG} | ${AUTHOR} | ${DATE} |")
+              done <<< "$COMMITS"
+            fi
+          done
+
+          if [ "$TOTAL" -eq 0 ]; then
+            echo "No commits in the last 6 hours. Skipping log update."
+            exit 0
+          fi
+
+          # Build the new log entry
+          {
+            echo ""
+            echo "---"
+            echo ""
+            echo "## ${NOW_LABEL}"
+            echo ""
+            echo "| Repository | Commits |"
+            echo "|---|---|"
+            for REPO in "${!REPO_COUNT[@]}"; do
+              echo "| ${REPO} | ${REPO_COUNT[$REPO]} |"
+            done
+            echo ""
+            REPO_COUNT_VAL=${#REPO_COUNT[@]}
+            echo "**Total: ${TOTAL} commits across ${REPO_COUNT_VAL} repo(s)**"
+            echo ""
+            echo "### Details"
+            echo "| SHA | Repository | Message | Author | Time (UTC) |"
+            echo "|---|---|---|---|---|"
+            for ROW in "${DETAIL_ROWS[@]}"; do
+              echo "$ROW"
+            done
+          } >> commit-log.md
+
+      - name: Commit and push log
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add commit-log.md
+          git diff --cached --quiet && echo "No changes to commit" && exit 0
+          git commit -m "chore: commit log $(date -u +'%Y-%m-%d %H:%M UTC')"
+          git push
