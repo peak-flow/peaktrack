@@ -1,0 +1,153 @@
+name: GitHub Commit Activity Log
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'   # every 6 hours: 00:00, 06:00, 12:00, 18:00 UTC
+  workflow_dispatch:          # allow manual trigger
+
+permissions:
+  contents: write
+
+jobs:
+  log-commits:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: claude/kind-pascal-qq0m9p
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Count commits in last 6 hours
+        id: commits
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          SINCE=$(date -u -d "6 hours ago" +"%Y-%m-%dT%H:%M:%SZ")
+          SINCE_DATE=$(date -u -d "6 hours ago" +"%Y-%m-%d")
+          WINDOW_LABEL="$(date -u -d '6 hours ago' +'%Y-%m-%d %H:%M') → $(date -u +'%Y-%m-%d %H:%M') UTC"
+
+          echo "now=$NOW"    >> "$GITHUB_OUTPUT"
+          echo "since=$SINCE" >> "$GITHUB_OUTPUT"
+          echo "window=$WINDOW_LABEL" >> "$GITHUB_OUTPUT"
+
+          # Search commits across the org since 6h ago
+          RESULT=$(gh api \
+            "search/commits?q=org:peak-flow+committer-date:>=${SINCE}&sort=committer-date&order=desc&per_page=100" \
+            -H "Accept: application/vnd.github.cloak-preview+json")
+
+          TOTAL=$(echo "$RESULT" | jq '.total_count')
+          echo "total=$TOTAL" >> "$GITHUB_OUTPUT"
+
+          # Build per-repo breakdown JSON: {"repo": count}
+          REPO_COUNTS=$(echo "$RESULT" | jq -r '
+            [.items[] | .repository.full_name] | group_by(.) |
+            map({repo: .[0], count: length}) | sort_by(-.count) |
+            .[] | "\(.repo)\t\(.count)"
+          ')
+          echo "repo_counts<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$REPO_COUNTS"      >> "$GITHUB_OUTPUT"
+          echo "EOF"               >> "$GITHUB_OUTPUT"
+
+          # Full commit details as TSV: repo\tsha7\tmessage_first_line\tdate_utc
+          COMMIT_DETAIL=$(echo "$RESULT" | jq -r '
+            .items[] |
+            [
+              .repository.full_name,
+              .sha[0:7],
+              (.commit.message | split("\n")[0] | .[0:80]),
+              (.commit.committer.date | split("T")[0] + " " + (.commit.committer.date | split("T")[1][0:5]) + " UTC"),
+              .html_url
+            ] | @tsv
+          ')
+          echo "commit_detail<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$COMMIT_DETAIL"     >> "$GITHUB_OUTPUT"
+          echo "EOF"                >> "$GITHUB_OUTPUT"
+
+      - name: Update markdown log
+        env:
+          TOTAL:         ${{ steps.commits.outputs.total }}
+          WINDOW:        ${{ steps.commits.outputs.window }}
+          REPO_COUNTS:   ${{ steps.commits.outputs.repo_counts }}
+          COMMIT_DETAIL: ${{ steps.commits.outputs.commit_detail }}
+          NOW:           ${{ steps.commits.outputs.now }}
+        run: |
+          set -euo pipefail
+          LOG="commit-activity-log.md"
+
+          # ── build the new section ───────────────────────────────────────────
+          {
+            echo "## $(date -u +'%Y-%m-%d %H:%M') UTC — Window: ${WINDOW}"
+            echo ""
+            echo "**Total commits: ${TOTAL}**"
+            echo ""
+
+            if [ "$TOTAL" -eq 0 ]; then
+              echo "No commits in this 6-hour window."
+            else
+              # Per-repo summary table
+              REPO_COUNT_LINES=$(echo "$REPO_COUNTS" | grep -c . || true)
+              echo "**${REPO_COUNT_LINES} repo(s) active**"
+              echo ""
+              echo "| Repository | Commits |"
+              echo "|---|---|"
+              while IFS=$'\t' read -r repo count; do
+                [ -z "$repo" ] && continue
+                echo "| ${repo} | ${count} |"
+              done <<< "$REPO_COUNTS"
+              echo ""
+
+              # Per-repo commit detail
+              CURRENT_REPO=""
+              while IFS=$'\t' read -r repo sha7 msg date url; do
+                [ -z "$repo" ] && continue
+                if [ "$repo" != "$CURRENT_REPO" ]; then
+                  [ -n "$CURRENT_REPO" ] && echo ""
+                  echo "### ${repo}"
+                  echo ""
+                  echo "| SHA | Message | Date |"
+                  echo "|---|---|---|"
+                  CURRENT_REPO="$repo"
+                fi
+                echo "| [${sha7}](${url}) | ${msg} | ${date} |"
+              done <<< "$COMMIT_DETAIL"
+            fi
+
+            echo ""
+            echo "---"
+            echo ""
+          } > /tmp/new_section.md
+
+          # ── prepend new section below the header block ──────────────────────
+          # Header = everything up to and including the first "---" separator
+          HEAD=$(awk '/^---$/{found++} found==1{print; exit} {print}' "$LOG")
+          TAIL=$(awk '/^---$/{found++} found>=2{print}' "$LOG")
+
+          {
+            echo "$HEAD"
+            echo ""
+            cat /tmp/new_section.md
+            echo "$TAIL"
+          } > /tmp/new_log.md
+
+          mv /tmp/new_log.md "$LOG"
+
+      - name: Commit and push
+        env:
+          TOTAL:  ${{ steps.commits.outputs.total }}
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add commit-activity-log.md
+          TIMESTAMP=$(date -u +'%Y-%m-%d %H:%M UTC')
+          git diff --cached --quiet && echo "No changes" && exit 0
+          git commit -m "chore: update commit activity log [${TIMESTAMP}]"
+          git push origin claude/kind-pascal-qq0m9p
+
+      - name: Notify if commits found
+        if: ${{ steps.commits.outputs.total != '0' }}
+        run: |
+          echo "::notice title=Commit Activity::${{ steps.commits.outputs.total }} commits in last 6h across peak-flow repos. See commit-activity-log.md for details."
