@@ -1,0 +1,76 @@
+name: Commit Activity Log
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  log-commits:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: claude/kind-pascal-vzsnwl
+
+      - name: Collect commits from last 6 hours
+        id: collect
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          SINCE=$(date -u -d '6 hours ago' +%Y-%m-%dT%H:%M:%SZ)
+          NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          echo "since=$SINCE" >> "$GITHUB_OUTPUT"
+          echo "now=$NOW" >> "$GITHUB_OUTPUT"
+
+          REPOS=("peak-flow/peaktrack")
+
+          TOTAL=0
+          SECTION=""
+
+          for REPO in "${REPOS[@]}"; do
+            RAW=$(gh api "repos/$REPO/commits?since=$SINCE&per_page=100" 2>/dev/null || echo "[]")
+            COUNT=$(echo "$RAW" | jq 'length')
+            TOTAL=$((TOTAL + COUNT))
+
+            ROWS=""
+            if [ "$COUNT" -gt 0 ]; then
+              ROWS=$(echo "$RAW" | jq -r '.[] | "| \(.sha[0:7]) | \(.commit.message | split("\n")[0] | .[0:80]) | \(.commit.author.name) |"')
+            fi
+
+            SECTION+=$(printf "\n### %s — %d commit(s)\n\n" "$REPO" "$COUNT")
+            if [ "$COUNT" -gt 0 ]; then
+              SECTION+="| SHA | Message | Author |\n|-----|---------|--------|\n$ROWS\n"
+            else
+              SECTION+="_No commits in this window._\n"
+            fi
+          done
+
+          echo "total=$TOTAL" >> "$GITHUB_OUTPUT"
+
+          # Write entry to commit-log.md
+          if [ ! -f commit-log.md ]; then
+            printf "# GitHub Commit Log\n\nAutomatically updated every 6 hours.\n" > commit-log.md
+          fi
+
+          {
+            printf "\n## %s\n" "$NOW"
+            printf "\n**Window:** %s → %s\n" "$SINCE" "$NOW"
+            printf "\n**Total commits across all repos:** %d\n" "$TOTAL"
+            printf "%b\n" "$SECTION"
+            printf "---\n"
+          } >> commit-log.md
+
+      - name: Commit and push log
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add commit-log.md
+          git diff --cached --quiet && echo "Nothing to commit" && exit 0
+          git commit -m "chore: update commit log [skip ci]"
+          git push origin claude/kind-pascal-vzsnwl
