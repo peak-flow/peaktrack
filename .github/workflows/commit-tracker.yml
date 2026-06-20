@@ -1,0 +1,78 @@
+name: Commit Tracker
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'   # every 6 hours: 00:00, 06:00, 12:00, 18:00 UTC
+  workflow_dispatch:          # allow manual runs
+
+permissions:
+  contents: write
+
+jobs:
+  track-commits:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: claude/kind-pascal-uhndjs
+          fetch-depth: 0
+
+      - name: Count commits in last 6 hours
+        id: count
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          SINCE=$(date -u -d '6 hours ago' '+%Y-%m-%dT%H:%M:%SZ')
+          NOW=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+          OWNER="peak-flow"
+          REPO="peaktrack"
+
+          # Fetch commits since 6h ago (paginate up to 100)
+          RESPONSE=$(gh api \
+            "repos/$OWNER/$REPO/commits?since=$SINCE&per_page=100" \
+            --jq '[.[] | {sha: .sha[0:7], message: (.commit.message | split("\n")[0])}]')
+
+          COUNT=$(echo "$RESPONSE" | jq 'length')
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+          echo "since=$SINCE" >> "$GITHUB_OUTPUT"
+          echo "now=$NOW" >> "$GITHUB_OUTPUT"
+
+          # Build detail lines
+          if [ "$COUNT" -gt 0 ]; then
+            DETAILS=$(echo "$RESPONSE" | jq -r '.[] | "  - \(.sha) \(.message)"')
+          else
+            DETAILS=""
+          fi
+          # Use a delimiter-safe approach for multiline output
+          {
+            echo "details<<EOF_DETAILS"
+            echo "$DETAILS"
+            echo "EOF_DETAILS"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Update commit-log.md
+        run: |
+          COUNT="${{ steps.count.outputs.count }}"
+          NOW="${{ steps.count.outputs.now }}"
+          DETAILS="${{ steps.count.outputs.details }}"
+          REPO="peak-flow/peaktrack"
+
+          # Append new row to the table
+          echo "| $NOW | $REPO | $COUNT |" >> commit-log.md
+
+          # If there were commits, add detail bullets below the table
+          if [ "$COUNT" -gt 0 ]; then
+            echo "" >> commit-log.md
+            echo "**$NOW — $COUNT commit(s):**" >> commit-log.md
+            echo "$DETAILS" >> commit-log.md
+            echo "" >> commit-log.md
+          fi
+
+      - name: Commit and push log
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add commit-log.md
+          git diff --cached --quiet || \
+            git commit -m "chore: update commit-log for $(date -u '+%Y-%m-%d %H:%M UTC')"
+          git push origin claude/kind-pascal-uhndjs
