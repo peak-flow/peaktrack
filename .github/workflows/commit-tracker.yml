@@ -1,0 +1,106 @@
+name: Commit Tracker
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  track-commits:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: master
+
+      - name: Count commits in last 6 hours
+        env:
+          GH_TOKEN: ${{ secrets.ORG_COMMIT_TRACKER_TOKEN || github.token }}
+        run: |
+          NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          SINCE=$(date -u -d '6 hours ago' +%Y-%m-%dT%H:%M:%SZ)
+          SINCE_DATE=$(date -u -d '6 hours ago' +%Y-%m-%d)
+
+          echo "Checking commits from $SINCE to $NOW"
+
+          # Fetch all repos in the org (paginated)
+          PAGE=1
+          ALL_REPOS=()
+          while true; do
+            BATCH=$(gh api "orgs/peak-flow/repos?per_page=100&page=$PAGE&sort=pushed&direction=desc" \
+              --jq '.[].name' 2>/dev/null || echo "")
+            [ -z "$BATCH" ] && break
+            mapfile -t CHUNK <<< "$BATCH"
+            ALL_REPOS+=("${CHUNK[@]}")
+            COUNT=${#CHUNK[@]}
+            [ "$COUNT" -lt 100 ] && break
+            PAGE=$((PAGE + 1))
+          done
+
+          echo "Found ${#ALL_REPOS[@]} repos"
+
+          # Build markdown table rows
+          TABLE_ROWS=""
+          TOTAL=0
+          ACTIVE_REPOS=0
+
+          for REPO in "${ALL_REPOS[@]}"; do
+            # Only check repos updated recently (pushed_at filter via API)
+            PUSHED=$(gh api "repos/peak-flow/$REPO" --jq '.pushed_at' 2>/dev/null || echo "")
+            # Skip repos not updated since our window
+            if [[ "$PUSHED" < "$SINCE" ]]; then
+              continue
+            fi
+
+            COUNT=$(gh api "repos/peak-flow/$REPO/commits?since=${SINCE}&per_page=1" \
+              --paginate --jq 'length' 2>/dev/null | paste -sd+ | bc 2>/dev/null || echo "0")
+            COUNT=${COUNT:-0}
+
+            if [ "$COUNT" -gt 0 ]; then
+              TABLE_ROWS="${TABLE_ROWS}| peak-flow/${REPO} | ${COUNT} |\n"
+              TOTAL=$((TOTAL + COUNT))
+              ACTIVE_REPOS=$((ACTIVE_REPOS + 1))
+            fi
+          done
+
+          if [ -z "$TABLE_ROWS" ]; then
+            TABLE_ROWS="| _(none)_ | 0 |\n"
+          fi
+
+          # Append entry to commit-log.md
+          LOG_FILE="commit-log.md"
+
+          if [ ! -f "$LOG_FILE" ]; then
+            cat >> "$LOG_FILE" << 'HEADER'
+          # GitHub Commit Log
+
+          Automated 6-hour commit tracker for the `peak-flow` org.
+
+          ---
+
+          HEADER
+          fi
+
+          {
+            echo ""
+            echo "## $(date -u +'%Y-%m-%d %H:%M UTC') — $TOTAL commit(s) across $ACTIVE_REPOS repo(s)"
+            echo ""
+            echo "| Repository | Commits |"
+            echo "|------------|---------|"
+            printf "%b" "$TABLE_ROWS"
+            echo ""
+          } >> "$LOG_FILE"
+
+          echo "Written entry: $TOTAL commits across $ACTIVE_REPOS repos"
+
+      - name: Commit and push log
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add commit-log.md
+          git diff --cached --quiet || git commit -m "chore: commit tracker update $(date -u +'%Y-%m-%d %H:%M UTC')"
+          git push origin master
