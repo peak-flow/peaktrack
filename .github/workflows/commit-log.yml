@@ -1,0 +1,64 @@
+name: Commit Activity Log
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  log-commits:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+
+      - name: Fetch commits from last 6h and update log
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          SINCE=$(date -u -d '6 hours ago' '+%Y-%m-%dT%H:%M:%SZ')
+          NOW=$(date -u '+%Y-%m-%d %H:%M UTC')
+          WINDOW_START=$(date -u -d '6 hours ago' '+%H:%M UTC')
+          ORG="peak-flow"
+
+          RESPONSE=$(curl -s \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/search/commits?q=org:${ORG}+committer-date:>=${SINCE}&sort=committer-date&order=desc&per_page=100")
+
+          TOTAL=$(echo "$RESPONSE" | jq '.total_count // 0')
+
+          if [ "$TOTAL" -eq 0 ]; then
+            NEW_SECTION="## ${NOW} — 6h window (${WINDOW_START} → ${NOW})\n\n**Total commits:** 0\n\n_(No commits this window)_"
+          else
+            REPO_COUNT=$(echo "$RESPONSE" | jq '[.items[].repository.full_name] | unique | length')
+            TABLE_ROWS=$(echo "$RESPONSE" | jq -r '
+              [.items[] | {repo: .repository.full_name, msg: (.commit.message | split("\n")[0])}]
+              | group_by(.repo)[]
+              | "| \(.[0].repo) | \(length) | \([.[].msg] | join("; ") | .[0:120]) |"
+            ')
+            NEW_SECTION="## ${NOW} — 6h window (${WINDOW_START} → ${NOW})\n\n**Total commits:** ${TOTAL} across ${REPO_COUNT} repos\n\n| Repository | Commits | Messages |\n|---|---|---|\n${TABLE_ROWS}"
+          fi
+
+          # Create the file if missing, otherwise prepend the new section after the header
+          if [ ! -f commit-log.md ]; then
+            printf '# peak-flow Commit Log\n\nAutomatically updated every 6 hours. Tracks all commits across the `peak-flow` org.\n\n---\n\n%b\n' "$NEW_SECTION" > commit-log.md
+          else
+            HEADER=$(head -4 commit-log.md)
+            REST=$(tail -n +5 commit-log.md)
+            printf '%s\n\n---\n\n%b\n%s\n' "$HEADER" "$NEW_SECTION" "$REST" > commit-log.md
+          fi
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add commit-log.md
+          git diff --staged --quiet || git commit -m "chore: commit log update [automated $(date -u '+%Y-%m-%d %H:%M UTC')]"
+          git push origin master
