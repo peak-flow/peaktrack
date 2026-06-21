@@ -1,0 +1,71 @@
+name: Commit Activity Tracker
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+
+jobs:
+  track-commits:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+
+      - name: Count commits in last 6 hours
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          REPOS=("peak-flow/peaktrack")
+          SINCE=$(date -u -d '6 hours ago' +%Y-%m-%dT%H:%M:%SZ)
+          NOW=$(date -u +'%Y-%m-%d %H:%M UTC')
+
+          TOTAL=0
+          TABLE_ROWS=""
+          FIRST_MSG=""
+          FIRST_SHA=""
+
+          for REPO in "${REPOS[@]}"; do
+            RESPONSE=$(gh api "repos/$REPO/commits?since=$SINCE&per_page=100" 2>/dev/null || echo "[]")
+            COUNT=$(echo "$RESPONSE" | jq 'length')
+            TOTAL=$((TOTAL + COUNT))
+            TABLE_ROWS="${TABLE_ROWS}| $REPO | $COUNT |\n"
+
+            if [ "$COUNT" -gt 0 ] && [ -z "$FIRST_MSG" ]; then
+              FIRST_MSG=$(echo "$RESPONSE" | jq -r '.[0].commit.message' | head -1)
+              FIRST_SHA=$(echo "$RESPONSE" | jq -r '.[0].sha[0:7]')
+            fi
+          done
+
+          if [ ! -f commit-log.md ]; then
+            printf "# Commit Activity Log\n\n" > commit-log.md
+          fi
+
+          {
+            echo "## $NOW — 6-hour commit check"
+            echo ""
+            echo "| Repo | Commits in last 6h |"
+            echo "|------|-------------------|"
+            printf "$TABLE_ROWS"
+            echo ""
+            echo "**Total:** $TOTAL commits"
+            echo ""
+            echo "---"
+            echo ""
+          } >> commit-log.md
+
+          echo "TOTAL=$TOTAL" >> "$GITHUB_ENV"
+          echo "FIRST_MSG=$FIRST_MSG" >> "$GITHUB_ENV"
+          echo "FIRST_SHA=$FIRST_SHA" >> "$GITHUB_ENV"
+
+      - name: Commit updated log
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add commit-log.md
+          git diff --staged --quiet || git commit -m "chore: commit-log — $TOTAL new commits"
+          git push
