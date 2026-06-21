@@ -1,0 +1,154 @@
+name: Commit Activity Tracker
+
+on:
+  schedule:
+    # Runs at 00:00, 06:00, 12:00, 18:00 UTC daily
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  track-commits:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          ref: claude/kind-pascal-7t6986
+
+      - name: Fetch commits from last 6 hours and update log
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+
+          SINCE=$(date -u -d '6 hours ago' +%Y-%m-%dT%H:%M:%SZ)
+          NOW=$(date -u +"%Y-%m-%d %H:%M UTC")
+          ORG="peak-flow"
+
+          echo "Checking commits since $SINCE"
+
+          # Query GitHub search API for commits in the org since SINCE
+          RESPONSE=$(gh api \
+            -H "Accept: application/vnd.github+json" \
+            "/search/commits?q=org:${ORG}+committer-date:>${SINCE}&per_page=100&sort=committer-date&order=desc" \
+            --paginate 2>/dev/null || echo '{"items":[]}')
+
+          # Parse: group by repo, count commits
+          TABLE=$(echo "$RESPONSE" | python3 -c "
+          import sys, json, collections
+          data = []
+          for line in sys.stdin:
+              line = line.strip()
+              if not line:
+                  continue
+              try:
+                  data.extend(json.loads(line).get('items', []))
+              except:
+                  pass
+          counts = collections.Counter()
+          for item in data:
+              repo = item.get('repository', {}).get('full_name', 'unknown')
+              counts[repo] += 1
+          total = sum(counts.values())
+          repos = len(counts)
+          rows = ''
+          for repo, n in sorted(counts.items(), key=lambda x: -x[1]):
+              rows += f'| {repo} | {n} |\n'
+          if not rows:
+              rows = '| No commits in this window. | — |\n'
+          print(f'ROWS={repr(rows)}')
+          print(f'TOTAL={total}')
+          print(f'REPOS={repos}')
+          ")
+
+          ROWS=$(echo "$TABLE" | grep '^ROWS=' | sed "s/^ROWS=//;s/^'//;s/'$//" | python3 -c "import sys; print(sys.stdin.read().encode().decode('unicode_escape'))" 2>/dev/null || echo "| No commits in this window. | — |")
+          TOTAL=$(echo "$TABLE" | grep '^TOTAL=' | sed 's/^TOTAL=//')
+          REPO_COUNT=$(echo "$TABLE" | grep '^REPOS=' | sed 's/^REPOS=//')
+
+          # Build new section
+          NEW_SECTION="## ${NOW} — commits in last 6 hours
+
+          | Repo | Commits |
+          |------|---------|
+          ${ROWS}
+          **Total:** ${TOTAL:-0} commits across ${REPO_COUNT:-0} repos
+          "
+
+          # Prepend to existing log (after the header block)
+          python3 - <<'PYEOF'
+          import os, re
+
+          with open('commit-log.md', 'r') as f:
+              content = f.read()
+
+          now = os.environ.get('NOW', '')
+          total = os.environ.get('TOTAL', '0')
+          repos = os.environ.get('REPO_COUNT', '0')
+          since = os.environ.get('SINCE', '')
+
+          import subprocess, json
+          result = subprocess.run(
+              ['gh', 'api', '-H', 'Accept: application/vnd.github+json',
+               f'/search/commits?q=org:peak-flow+committer-date:>{since}&per_page=100&sort=committer-date&order=desc'],
+              capture_output=True, text=True, env=dict(os.environ)
+          )
+          try:
+              data = json.loads(result.stdout).get('items', [])
+          except:
+              data = []
+
+          import collections
+          counts = collections.Counter()
+          for item in data:
+              repo = item.get('repository', {}).get('full_name', 'unknown')
+              counts[repo] += 1
+
+          total_commits = sum(counts.values())
+          repo_count = len(counts)
+
+          rows = ''
+          for repo, n in sorted(counts.items(), key=lambda x: -x[1]):
+              rows += f'| {repo} | {n} |\n'
+          if not rows:
+              rows = '| No commits in this window. | — |\n'
+
+          new_section = f"""## {now} — commits in last 6 hours
+
+          | Repo | Commits |
+          |------|---------|
+          {rows}
+          **Total:** {total_commits} commits across {repo_count} repos
+
+          ---
+
+          """
+
+          # Insert after the header (first --- separator)
+          sep = '\n---\n'
+          idx = content.find(sep)
+          if idx != -1:
+              updated = content[:idx + len(sep)] + '\n' + new_section + content[idx + len(sep):]
+          else:
+              updated = content + '\n' + new_section
+
+          with open('commit-log.md', 'w') as f:
+              f.write(updated)
+
+          print(f"Logged {total_commits} commits across {repo_count} repos.")
+          PYEOF
+
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NOW: "${{ env.NOW }}"
+          SINCE: "${{ env.SINCE }}"
+
+      - name: Commit and push updated log
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add commit-log.md
+          git diff --staged --quiet || git commit -m "chore: update commit activity log [$(date -u +%Y-%m-%d\ %H:%M\ UTC)]"
+          git push
