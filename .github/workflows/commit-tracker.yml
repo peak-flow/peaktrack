@@ -1,0 +1,124 @@
+name: Commit Activity Tracker
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'   # runs at 00:00, 06:00, 12:00, 18:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  track-commits:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: claude/kind-pascal-r9iamf
+          fetch-depth: 0
+
+      - name: Fetch all branches
+        run: git fetch --all --quiet
+
+      - name: Build commit report and update log
+        run: |
+          python3 - <<'PYEOF'
+          import subprocess, datetime, collections
+
+          REPO = 'peak-flow/peaktrack'
+          HOURS = 6
+
+          since_dt  = datetime.datetime.utcnow() - datetime.timedelta(hours=HOURS)
+          since_iso = since_dt.strftime('%Y-%m-%dT%H:%M:%SZ')
+          now_label = datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')
+
+          # --- unique commits in window ------------------------------------------
+          raw = subprocess.run(
+              ['git', 'log', '--remotes', f'--since={since_iso}',
+               '--format=%H\x1f%an\x1f%s'],
+              capture_output=True, text=True
+          ).stdout.strip()
+
+          commits = {}   # sha -> {author, subject}
+          for line in raw.splitlines():
+              if not line:
+                  continue
+              parts = line.split('\x1f', 2)
+              sha = parts[0]
+              if sha not in commits:
+                  commits[sha] = {
+                      'author':  parts[1] if len(parts) > 1 else '?',
+                      'subject': parts[2] if len(parts) > 2 else '',
+                  }
+
+          total = len(commits)
+
+          # --- which remote branches had their tip updated in the window ----------
+          refs_raw = subprocess.run(
+              ['git', 'for-each-ref',
+               '--format=%(refname:short)\t%(objectname)\t%(committerdate:iso-strict)',
+               'refs/remotes/origin/'],
+              capture_output=True, text=True
+          ).stdout.strip()
+
+          active_branches = []
+          for line in refs_raw.splitlines():
+              parts = line.split('\t', 2)
+              if len(parts) < 3:
+                  continue
+              branch, sha, date_str = parts
+              branch = branch.removeprefix('origin/')
+              try:
+                  dt = datetime.datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+                  dt_naive = dt.replace(tzinfo=None) - dt.utcoffset()
+              except Exception:
+                  continue
+              if dt_naive >= since_dt:
+                  active_branches.append(branch)
+
+          # --- build markdown section --------------------------------------------
+          if total > 0:
+              branch_list = '\n'.join(f'- `{b}`' for b in sorted(active_branches)) or '_none detected_'
+              section = f"""## {now_label}
+
+**Repo:** `{REPO}`
+**Commits (last {HOURS}h):** {total}
+**Branches with new activity:**
+{branch_list}
+
+"""
+          else:
+              section = f"""## {now_label}
+
+**Repo:** `{REPO}`
+**Commits (last {HOURS}h):** 0 — nothing new.
+
+"""
+
+          # --- prepend after the header block (first blank line after ---)  ------
+          with open('commit-log.md', 'r') as f:
+              content = f.read()
+
+          marker = '\n---\n'
+          idx = content.find(marker)
+          if idx != -1:
+              content = content[:idx + len(marker)] + '\n' + section + content[idx + len(marker):]
+          else:
+              content += '\n' + section
+
+          with open('commit-log.md', 'w') as f:
+              f.write(content)
+
+          print(f'Report written: {total} commits | {len(active_branches)} active branches')
+          PYEOF
+
+      - name: Commit and push
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add commit-log.md
+          git diff --staged --quiet \
+            && echo "No changes — log already up to date." \
+            || (git commit -m "chore: commit activity log $(date -u +'%Y-%m-%d %H:%M UTC')" \
+                && git push origin claude/kind-pascal-r9iamf)
