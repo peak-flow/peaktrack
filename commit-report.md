@@ -144,3 +144,14 @@ No commits this window.
 | peak-flow/peaktrack | 1 | chore: commit report 2026-06-26 07:19 UTC |
 
 ---
+
+## 2026-06-26 · window `2026-06-26T12:38:11Z` → `2026-06-26T18:38:11Z`
+
+**Total commits:** 10
+
+| Repository | Commits | Latest message |
+|---|---|---|
+| peak-flow/TypeBridge | 9 | Add Chrome Web Store privacy and assets |
+| peak-flow/peaktrack | 1 | chore: commit report 2026-06-26 12:45 UTC |
+
+---
