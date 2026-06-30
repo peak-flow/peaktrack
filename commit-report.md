@@ -289,3 +289,14 @@ No commits this window.
 | peak-flow/peaktrack | 1 | chore: commit report 2026-06-30 07:20 UTC |
 
 ---
+
+## 2026-06-30 · window `2026-06-30T12:38:26Z` → `2026-06-30T18:38:26Z`
+
+**Total commits:** 2
+
+| Repository | Commits | Latest message |
+|---|---|---|
+| peak-flow/jana | 1 | Merge pull request #1 from peak-flow/feat/multi-window-b-lite |
+| peak-flow/peaktrack | 1 | chore: commit report 2026-06-30 12:42 UTC |
+
+---
