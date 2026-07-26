@@ -1175,7 +1175,7 @@ No commits this window.
 
 ---
 
-## 2026-07-24 · window `2026-07-24T12:31:15Z` → `2026-07-24T18:31:15Z`
+## 2026-07-24 · window `2026-07-24T12:03:07Z` → `2026-07-24T18:03:07Z`
 
 **Total commits:** 1
 
@@ -1185,43 +1185,17 @@ No commits this window.
 
 ---
 
-## 2026-07-25 · window `2026-07-24T18:33:07Z` → `2026-07-25T00:33:07Z`
-
-**Total commits:** 0
-
-No commits this window.
-
----
-
-## 2026-07-25 · window `2026-07-25T00:47:55Z` → `2026-07-25T06:47:55Z`
-
-**Total commits:** 0
-
-No commits this window.
-
----
-
-## 2026-07-25 · window `2026-07-25T06:20:33Z` → `2026-07-25T12:20:33Z`
+## 2026-07-25 · window `2026-07-24T18:00:00Z` → `2026-07-25T00:31:16Z`
 
 **Total commits:** 1
 
 | Repository | Commits | Latest message |
 |---|---|---|
-| peak-flow/peaktrack | 1 | chore: commit report 2026-07-25 06:47 UTC |
+| peak-flow/peaktrack | 1 | chore: commit report 2026-07-24 18:31 UTC |
 
 ---
 
-## 2026-07-25 · window `2026-07-25T12:19:10Z` → `2026-07-25T18:19:10Z`
-
-**Total commits:** 1
-
-| Repository | Commits | Latest message |
-|---|---|---|
-| peak-flow/peaktrack | 1 | chore: commit report 2026-07-25 12:20 UTC |
-
----
-
-## 2026-07-26 · window `2026-07-25T18:35:12Z` → `2026-07-26T00:35:12Z`
+## 2026-07-25 · window `2026-07-25T00:31:16Z` → `2026-07-25T06:31:16Z`
 
 **Total commits:** 0
 
@@ -1229,7 +1203,7 @@ No commits this window.
 
 ---
 
-## 2026-07-26 · window `2026-07-26T00:55:50Z` → `2026-07-26T06:55:50Z`
+## 2026-07-25 · window `2026-07-25T06:31:16Z` → `2026-07-25T12:31:16Z`
 
 **Total commits:** 0
 
@@ -1237,12 +1211,40 @@ No commits this window.
 
 ---
 
-## 2026-07-26 · window `2026-07-26T06:24:46Z` → `2026-07-26T12:24:46Z`
+## 2026-07-25 · window `2026-07-25T12:31:16Z` → `2026-07-25T18:31:16Z`
 
 **Total commits:** 1
 
 | Repository | Commits | Latest message |
 |---|---|---|
-| peak-flow/peaktrack | 1 | chore: commit report 2026-07-26 06:55 UTC |
+| peak-flow/peaktrack | 1 | chore: commit report 2026-07-25 18:19 UTC |
+
+---
+
+## 2026-07-25 · window `2026-07-25T18:31:16Z` → `2026-07-26T00:31:16Z`
+
+**Total commits:** 0
+
+No commits this window.
+
+---
+
+## 2026-07-26 · window `2026-07-26T00:31:16Z` → `2026-07-26T06:31:16Z`
+
+**Total commits:** 1
+
+| Repository | Commits | Latest message |
+|---|---|---|
+| peak-flow/peaktrack | 1 | chore: commit report 2026-07-26 00:35 UTC |
+
+---
+
+## 2026-07-26 · window `2026-07-26T06:31:16Z` → `2026-07-26T12:31:16Z`
+
+**Total commits:** 2
+
+| Repository | Commits | Latest message |
+|---|---|---|
+| peak-flow/peaktrack | 2 | chore: commit report 2026-07-26 12:24 UTC |
 
 ---
