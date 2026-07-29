@@ -1175,7 +1175,7 @@ No commits this window.
 
 ---
 
-## 2026-07-24 · window `2026-07-24T12:03:07Z` → `2026-07-24T18:03:07Z`
+## 2026-07-24 · window `2026-07-24T12:31:15Z` → `2026-07-24T18:31:15Z`
 
 **Total commits:** 1
 
@@ -1185,13 +1185,11 @@ No commits this window.
 
 ---
 
-## 2026-07-25 · window `2026-07-24T18:00:00Z` → `2026-07-25T00:31:16Z`
+## 2026-07-25 · window `2026-07-24T18:33:07Z` → `2026-07-25T00:33:07Z`
 
-**Total commits:** 1
+**Total commits:** 0
 
-| Repository | Commits | Latest message |
-|---|---|---|
-| peak-flow/peaktrack | 1 | chore: commit report 2026-07-24 18:31 UTC |
+No commits this window.
 
 ---
 
@@ -1267,32 +1265,78 @@ No commits this window.
 
 ---
 
-## 2026-07-27 · window `2026-07-27T00:34:33Z` → `2026-07-27T06:34:33Z`
+## 2026-07-27 · window `2026-07-27T01:09:29Z` → `2026-07-27T07:09:29Z`
+
+**Total commits:** 0
+
+No commits this window.
+
+---
+
+## 2026-07-27 · window `2026-07-27T07:04:27Z` → `2026-07-27T13:04:27Z`
 
 **Total commits:** 1
 
 | Repository | Commits | Latest message |
 |---|---|---|
-| peak-flow/peaktrack | 1 | chore: commit report 2026-07-27 00:34 UTC |
+| peak-flow/peaktrack | 1 | chore: commit report 2026-07-27 07:09 UTC |
 
 ---
 
-## 2026-07-28 · window `2026-07-27T06:34:33Z` → `2026-07-28T12:53:52Z` *(Claude Code catch-up)*
+## 2026-07-27 · window `2026-07-27T12:33:01Z` → `2026-07-27T18:33:01Z`
 
-**Total commits:** 3
+**Total commits:** 1
 
-| Repository | SHA | Author | Message | Timestamp |
-|---|---|---|---|---|
-| peak-flow/peaktrack | [`9cb404b`](https://github.com/peak-flow/peaktrack/commit/9cb404b0bb24fb888847a44f44eb2ba253f6cf8e) | github-actions[bot] | chore: commit report 2026-07-28 06:53 UTC | 2026-07-28T06:53:53Z |
-| peak-flow/peaktrack | [`665a604`](https://github.com/peak-flow/peaktrack/commit/665a604981a1779df696583705c2df57f42a392b) | github-actions[bot] | chore: commit report 2026-07-28 00:31 UTC | 2026-07-28T00:31:21Z |
-| peak-flow/peaktrack | [`81df4f2`](https://github.com/peak-flow/peaktrack/commit/81df4f2a1677eee6c2796e30dff6253806ffbbb9) | github-actions[bot] | chore: commit report 2026-07-27 18:33 UTC | 2026-07-27T18:33:02Z |
+| Repository | Commits | Latest message |
+|---|---|---|
+| peak-flow/peaktrack | 1 | chore: commit report 2026-07-27 13:04 UTC |
 
 ---
 
-## 2026-07-28 · window `2026-07-28T06:53:52Z` → `2026-07-28T12:53:52Z`
+## 2026-07-28 · window `2026-07-27T18:31:20Z` → `2026-07-28T00:31:20Z`
+
+**Total commits:** 1
+
+| Repository | Commits | Latest message |
+|---|---|---|
+| peak-flow/peaktrack | 1 | chore: commit report 2026-07-27 18:33 UTC |
+
+---
+
+## 2026-07-28 · window `2026-07-28T00:53:52Z` → `2026-07-28T06:53:52Z`
 
 **Total commits:** 0
 
 No commits this window.
+
+---
+
+## 2026-07-28 · window `2026-07-28T06:37:57Z` → `2026-07-28T12:37:57Z`
+
+**Total commits:** 1
+
+| Repository | Commits | Latest message |
+|---|---|---|
+| peak-flow/peaktrack | 1 | chore: commit report 2026-07-28 06:53 UTC |
+
+---
+
+## 2026-07-28 · window `2026-07-28T12:30:27Z` → `2026-07-28T18:30:27Z`
+
+**Total commits:** 1
+
+| Repository | Commits | Latest message |
+|---|---|---|
+| peak-flow/peaktrack | 1 | chore: commit report 2026-07-28 12:37 UTC |
+
+---
+
+## 2026-07-29 · window `2026-07-28T18:30:27Z` → `2026-07-29T00:30:27Z`
+
+**Total commits:** 1
+
+| Repository | Commits | Latest message |
+|---|---|---|
+| peak-flow/peaktrack | 1 | chore: commit report 2026-07-28 18:30 UTC |
 
 ---
