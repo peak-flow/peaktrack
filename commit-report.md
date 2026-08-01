@@ -1458,3 +1458,14 @@ No commits this window.
 | peak-flow/peakflow-skills | 6 | docs: add repo and plugin documentation |
 
 ---
+
+## 2026-08-01 · window `2026-08-01T06:22:25Z` → `2026-08-01T12:22:25Z`
+
+**Total commits:** 7
+
+| Repository | Commits | Latest message |
+|---|---|---|
+| peak-flow/peakflow-skills | 6 | docs: add repo and plugin documentation |
+| peak-flow/peaktrack | 1 | chore: commit report 2026-08-01 06:51 UTC |
+
+---
