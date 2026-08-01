@@ -1448,3 +1448,13 @@ No commits this window.
 No commits this window.
 
 ---
+
+## 2026-08-01 · window `2026-08-01T00:51:15Z` → `2026-08-01T06:51:15Z`
+
+**Total commits:** 6
+
+| Repository | Commits | Latest message |
+|---|---|---|
+| peak-flow/peakflow-skills | 6 | docs: add repo and plugin documentation |
+
+---
