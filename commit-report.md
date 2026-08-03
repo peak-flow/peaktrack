@@ -1533,3 +1533,14 @@ No commits this window.
 | peak-flow/peaktabs | 10 | chore(manifest): bump version to 1.3.0 |
 
 ---
+
+## 2026-08-03 · window `2026-08-03T07:09:14Z` → `2026-08-03T10:35:00Z`
+
+**Total commits:** 73
+
+| Repository | Commits | Latest message |
+|---|---|---|
+| peak-flow/peakflow | 66 | chore: sync registry dashboard |
+| peak-flow/disa-2android | 7 | docs: close Phase 0 with the UI structure and provider surfaces |
+
+---
