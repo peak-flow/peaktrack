@@ -1523,3 +1523,13 @@ No commits this window.
 No commits this window.
 
 ---
+
+## 2026-08-03 · window `2026-08-03T01:09:13Z` → `2026-08-03T07:09:13Z`
+
+**Total commits:** 10
+
+| Repository | Commits | Latest message |
+|---|---|---|
+| peak-flow/peaktabs | 10 | chore(manifest): bump version to 1.3.0 |
+
+---
