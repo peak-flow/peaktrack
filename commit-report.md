@@ -1859,25 +1859,32 @@ No commits this window.
 
 ---
 
-## 2026-08-12 · window `2026-08-12T00:21:23Z` → `2026-08-12T06:21:23Z`
+## 2026-08-12 · window `2026-08-12T00:30:10Z` → `2026-08-12T06:30:10Z`
 
-**Total commits:** 2 *(corrected — automated workflow missed private repo)*
+**Total commits:** 1
 
-| Repository | SHA | Author | Message | Timestamp |
-|---|---|---|---|---|
-| peak-flow/peaksmarttab | [`29f932a`](https://github.com/peak-flow/peaksmarttab/commit/29f932a3699b408dce2a547bae58ede439f16673) | peak-flow | feat: initial public release of PeakSmartTab | 2026-08-12T01:07:55Z |
-| peak-flow/peakflow *(private)* | [`e566c5c`](https://github.com/peak-flow/peakflow/commit/e566c5cb3f9de7adf0fb60e2d36a031b24ed13f5) | peak-flow | chore: sync registry dashboard | 2026-08-12T01:08:00Z |
-
-> **Note:** `peak-flow/peakflow` is a private repo. Add a PAT with `repo` scope as `COMMIT_REPORT_TOKEN` to capture it automatically.
+| Repository | Commits | Latest message |
+|---|---|---|
+| peak-flow/peaksmarttab | 1 | feat: initial public release of PeakSmartTab |
 
 ---
 
-## 2026-08-12 · window `2026-08-12T06:21:23Z` → `2026-08-12T12:21:00Z`
+## 2026-08-12 · window `2026-08-12T06:17:25Z` → `2026-08-12T12:17:25Z`
 
 **Total commits:** 1
 
 | Repository | Commits | Latest message |
 |---|---|---|
 | peak-flow/peaktrack | 1 | chore: commit report 2026-08-12 06:30 UTC |
+
+---
+
+## 2026-08-12 · window `2026-08-12T12:05:27Z` → `2026-08-12T18:05:27Z`
+
+**Total commits:** 1
+
+| Repository | Commits | Latest message |
+|---|---|---|
+| peak-flow/peaktrack | 1 | chore: commit report 2026-08-12 12:17 UTC |
 
 ---
