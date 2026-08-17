@@ -28,3 +28,12 @@ No commits this window.
 | peak-flow/peaktrack | 1 | chore: commit report 2026-08-13 12:18 UTC |
 
 ---
+
+## 2026-08-17 · window `2026-08-17T12:04:16Z` → `2026-08-17T18:04:16Z`
+**Total commits:** 1
+
+| Repository | Commits | Author | SHA | Message |
+|---|---|---|---|---|
+| peak-flow/peaktrack | 1 | github-actions[bot] | `ef86321` | chore: commit report 2026-08-17 12:07 UTC |
+
+---
