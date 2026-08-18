@@ -2106,3 +2106,14 @@ No commits this window.
 | peak-flow/peaktrack | 1 | chore: commit report 2026-08-18 06:09 UTC |
 
 ---
+
+## 2026-08-18 · window `2026-08-18T12:07:48Z` → `2026-08-18T18:07:48Z`
+
+**Total commits:** 5
+
+| Repository | Commits | Latest message |
+|---|---|---|
+| peak-flow/visual-ide | 4 | refactor(repo): move Laravel app into laravel/, drop Boost scaffolding |
+| peak-flow/peaktrack | 1 | chore: commit report 2026-08-18 12:08 UTC |
+
+---
