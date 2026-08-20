@@ -1,36 +1,25 @@
-# PeakTrack Commit Log
+# GitHub Commit Activity Log
 
-Auto-generated every 6 hours. Records commits made to `peak-flow/peaktrack` in each 6-hour window.
-
----
-
-## 2026-08-04 06:07 UTC — window: 2026-08-04 00:07 → 2026-08-04 06:07 UTC
-
-**Total commits:** 1  
-**Repository:** peak-flow/peaktrack
-
-| SHA | Message | Author | Timestamp (UTC) |
-|-----|---------|--------|-----------------|
-| [f039291](https://github.com/peak-flow/peaktrack/commit/f039291582369fe6e41b83001694face831602c0) | chore: commit report 2026-08-04 00:32 UTC | github-actions[bot] | 2026-08-04 00:32:44 |
+Automatically updated every 6 hours. Each entry covers commits made in the preceding 6-hour window.
 
 ---
 
-## 2026-07-28 00:03 UTC — window: 2026-07-27 18:03 → 2026-07-28 00:03 UTC
+## 2026-08-20 06:15 UTC
 
-**Total commits:** 1  
-**Repository:** peak-flow/peaktrack
+**Window:** 2026-08-20T00:15Z → 2026-08-20T06:15Z
 
-| SHA | Message | Author | Timestamp (UTC) |
-|-----|---------|--------|-----------------|
-| [81df4f2](https://github.com/peak-flow/peaktrack/commit/81df4f2a1677eee6c2796e30dff6253806ffbbb9) | chore: commit report 2026-07-27 18:33 UTC | github-actions[bot] | 2026-07-27 18:33:02 |
+| Repository | Commits | Authors |
+|---|---|---|
+| peak-flow/peaktrack | 1 | github-actions[bot] |
+
+### peak-flow/peaktrack — 1 commit
+
+| SHA | Time (UTC) | Author | Message |
+|---|---|---|---|
+| [e69161c](https://github.com/peak-flow/peaktrack/commit/e69161ce0049d08d635b9c25ec16e87d82bfecc6) | 2026-08-20 06:09:13 | github-actions[bot] | chore: commit report 2026-08-20 06:09 UTC |
+
+**Total commits across all repos this window: 1**
 
 ---
 
-## 2026-07-23 00:00 UTC — window: 2026-07-22 18:00 → 2026-07-23 00:00 UTC
-
-**Total commits:** 1  
-**Repository:** peak-flow/peaktrack
-
-| SHA | Message | Author | Timestamp (UTC) |
-|-----|---------|--------|-----------------|
-| [f1a5e8a](https://github.com/peak-flow/peaktrack/commit/f1a5e8a08b49f5cf0428839ef1eac9e8d4f5a546) | chore: commit report 2026-07-22 18:26 UTC | github-actions[bot] | 2026-07-22 18:26:38 |
+<!-- Future entries will be appended above this line -->
