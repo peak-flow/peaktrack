@@ -415,7 +415,7 @@ No commits this window.
 
 | Repository | Commits | Latest message |
 |---|---|---|
-| peak-flow/peaktrack | 1 | chore: commit report 2026-07-03 18:29 UTC |
+| peak-flow/peaktrack | 1 | chore: initialize commit activity log |
 
 ---
 
@@ -2097,46 +2097,119 @@ No commits this window.
 
 ---
 
-## 2026-08-18 · window `2026-08-18T06:09:01Z` → `2026-08-18T12:09:01Z` *(Claude Code session)*
-
-**Total commits:** 1
-
-| Repository | SHA | Author | Message | Timestamp |
-|---|---|---|---|---|
-| peak-flow/peaktrack | [`dc7be3f`](https://github.com/peak-flow/peaktrack/commit/dc7be3f4df0cb9420543b3495051ed592c667332) | github-actions[bot] | chore: commit report 2026-08-18 06:09 UTC | 2026-08-18T06:09:01Z |
-
----
-
-## 2026-08-18 · window `2026-08-18T12:09:01Z` → `2026-08-18T18:09:01Z` *(Claude Code session)*
-
-**Total commits:** 0
-
-No commits this window.
-
----
-
-## 2026-08-19 · window `2026-08-18T18:09:01Z` → `2026-08-19T12:09:00Z` *(Claude Code session)*
-
-**Total commits:** 0
-
-No commits this window.
-
----
-
-## 2026-08-19 · window `2026-08-19T12:08:07Z` → `2026-08-19T18:08:07Z`
-
-**Total commits:** 0
-
-No commits this window.
-
----
-
-## 2026-08-19 · window `2026-08-19T18:08:07Z` → `2026-08-19T18:38:07Z` *(Claude Code session)*
+## 2026-08-18 · window `2026-08-18T06:08:35Z` → `2026-08-18T12:08:35Z`
 
 **Total commits:** 1
 
 | Repository | Commits | Latest message |
 |---|---|---|
-| peak-flow/peaktrack | 1 | chore: commit report 2026-08-19 18:08 UTC |
+| peak-flow/peaktrack | 1 | chore: commit report 2026-08-18 06:09 UTC |
+
+---
+
+## 2026-08-18 · window `2026-08-18T12:07:48Z` → `2026-08-18T18:07:48Z`
+
+**Total commits:** 5
+
+| Repository | Commits | Latest message |
+|---|---|---|
+| peak-flow/visual-ide | 4 | refactor(repo): move Laravel app into laravel/, drop Boost scaffolding |
+| peak-flow/peaktrack | 1 | chore: commit report 2026-08-18 12:08 UTC |
+
+---
+
+## 2026-08-19 · window `2026-08-18T18:11:06Z` → `2026-08-19T00:11:06Z`
+
+**Total commits:** 1
+
+| Repository | Commits | Latest message |
+|---|---|---|
+| peak-flow/visual-ide | 1 | chore: ignore local session notes |
+
+---
+
+## 2026-08-19 · window `2026-08-19T00:09:20Z` → `2026-08-19T06:09:20Z`
+
+**Total commits:** 1
+
+| Repository | Commits | Latest message |
+|---|---|---|
+| peak-flow/peaktrack | 1 | chore: commit report 2026-08-19 00:11 UTC |
+
+---
+
+## 2026-08-19 · window `2026-08-19T06:08:04Z` → `2026-08-19T12:08:04Z`
+
+**Total commits:** 1
+
+| Repository | Commits | Latest message |
+|---|---|---|
+| peak-flow/peaktrack | 1 | chore: commit report 2026-08-19 06:09 UTC |
+
+---
+
+## 2026-08-19 · window `2026-08-19T12:07:05Z` → `2026-08-19T18:07:05Z`
+
+**Total commits:** 1
+
+| Repository | Commits | Latest message |
+|---|---|---|
+| peak-flow/peaktrack | 1 | chore: commit report 2026-08-19 12:08 UTC |
+
+---
+
+## 2026-08-20 · window `2026-08-19T18:11:41Z` → `2026-08-20T00:11:41Z`
+
+**Total commits:** 0
+
+No commits this window.
+
+---
+
+## 2026-08-20 · window `2026-08-20T00:09:12Z` → `2026-08-20T06:09:12Z`
+
+**Total commits:** 1
+
+| Repository | Commits | Latest message |
+|---|---|---|
+| peak-flow/peaktrack | 1 | chore: commit report 2026-08-20 00:11 UTC |
+
+---
+
+## 2026-08-20 · window `2026-08-20T06:09:00Z` → `2026-08-20T12:09:00Z`
+
+**Total commits:** 1
+
+| Repository | Commits | Latest message |
+|---|---|---|
+| peak-flow/peaktrack | 1 | chore: commit report 2026-08-20 06:09 UTC |
+
+---
+
+## 2026-08-20 · window `2026-08-20T12:08:19Z` → `2026-08-20T18:08:19Z`
+
+**Total commits:** 1
+
+| Repository | Commits | Latest message |
+|---|---|---|
+| peak-flow/peaktrack | 1 | chore: commit report 2026-08-20 12:09 UTC |
+
+---
+
+## 2026-08-21 · window `2026-08-20T18:12:36Z` → `2026-08-21T00:12:36Z`
+
+**Total commits:** 0
+
+No commits this window.
+
+---
+
+## 2026-08-21 · window `2026-08-21T00:05:29Z` → `2026-08-21T06:05:29Z`
+
+**Total commits:** 1
+
+| Repository | Commits | Latest message |
+|---|---|---|
+| peak-flow/peaktrack | 1 | chore: commit report 2026-08-21 00:12 UTC |
 
 ---
