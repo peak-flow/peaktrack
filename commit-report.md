@@ -2605,3 +2605,15 @@ No commits this window.
 | peak-flow/peaktrack | 1 | chore: commit report 2026-08-31 06:19 UTC |
 
 ---
+
+## 2026-08-31 · window `2026-08-31T06:20:00Z` → `2026-08-31T12:20:00Z`
+
+<!-- source: claude-scheduled-run -->
+
+**Total commits (peak-flow/peaktrack):** 2
+
+| Repository | Commits | Authors | Latest message |
+|---|---|---|---|
+| peak-flow/peaktrack | 2 | github-actions[bot] | chore: commit report 2026-08-31 12:14 UTC |
+
+---
