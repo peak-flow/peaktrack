@@ -29,48 +29,11 @@ No commits this window.
 
 ---
 
-## 2026-08-27 · window `2026-08-27T09:42:00Z` → `2026-08-27T15:42:00Z`
-**Total commits:** 2
-
-| Repository | Commits | Latest message |
-|---|---|---|
-| peak-flow/peaktrack | 2 | chore: commit report 2026-08-27 15:41 UTC |
-
-### Commit details
-
-| SHA | Author | Time (UTC) | Message |
-|---|---|---|---|
-| [dbe4cb7](https://github.com/peak-flow/peaktrack/commit/dbe4cb723fca28acb253b764092631b81d1efb8e) | github-actions[bot] | 2026-08-27 15:41 | chore: commit report 2026-08-27 15:41 UTC |
-| [1827767](https://github.com/peak-flow/peaktrack/commit/1827767b13d4b1bfe590da20dcfc638447bb3ac5) | Claude | 2026-08-27 12:56 | chore: commit report 2026-08-27 15:05 UTC |
-
----
-
-## 2026-09-15 · window `2026-09-15T00:14:02Z` → `2026-09-15T06:14:02Z`
+## 2026-09-30 · window `2026-09-30T06:24:29Z` → `2026-09-30T12:24:29Z`
 **Total commits:** 1
 
-| Repository | Commits | Latest message |
-|---|---|---|
-| peak-flow/peaktrack | 1 | chore: commit report 2026-09-15 00:24 UTC |
-
-### Commit details
-
-| SHA | Author | Time (UTC) | Message |
+| Repository | Commits | Latest message | Author |
 |---|---|---|---|
-| [ced0a55](https://github.com/peak-flow/peaktrack/commit/ced0a556c3db2f27309a25148f59fa07db6ca40a) | github-actions[bot] | 2026-09-15 00:24 | chore: commit report 2026-09-15 00:24 UTC |
-
----
-
-## 2026-09-28 · window `2026-09-28T06:37:47Z` → `2026-09-28T12:37:47Z`
-**Total commits:** 1
-
-| Repository | Commits | Latest message |
-|---|---|---|
-| peak-flow/peaktrack | 1 | chore: commit report 2026-09-28 12:15 UTC |
-
-### Commit details
-
-| SHA | Author | Time (UTC) | Message |
-|---|---|---|---|
-| [23e665a](https://github.com/peak-flow/peaktrack/commit/23e665ad855a41b968431ebdb7892a00bc3bce06) | github-actions[bot] | 2026-09-28 12:15 | chore: commit report 2026-09-28 12:15 UTC |
+| peak-flow/peaktrack | 1 | chore: commit report 2026-09-30 12:14 UTC | github-actions[bot] |
 
 ---
