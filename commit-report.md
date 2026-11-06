@@ -5278,3 +5278,14 @@ No commits this window.
 | peak-flow/type-html | 1 | feat: standalone Alpine vs Tiptap alert editor comparison |
 
 ---
+
+## 2026-11-06 · window `2026-11-06T00:11:07Z` → `2026-11-06T06:11:07Z`
+
+**Total commits:** 3
+
+| Repository | Commits | Latest message |
+|---|---|---|
+| peak-flow/type-html | 2 | docs(examples): rewrite Laravel example as step-by-step integration guide |
+| peak-flow/peaktrack | 1 | chore: commit report 2026-11-06 00:15 UTC |
+
+---
