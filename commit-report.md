@@ -5865,3 +5865,14 @@ No commits this window.
 | peak-flow/peaktrack | 1 | chore: commit report 2026-11-20 06:09 UTC |
 
 ---
+
+## 2026-11-20 · window `2026-11-20T12:07:07Z` → `2026-11-20T18:07:07Z`
+
+**Total commits:** 2
+
+| Repository | Commits | Latest message |
+|---|---|---|
+| peak-flow/peakflow-skills | 1 | feat(qna): add Q&A side pane mod |
+| peak-flow/peaktrack | 1 | chore: commit report 2026-11-20 12:07 UTC |
+
+---
