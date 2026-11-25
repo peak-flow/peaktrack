@@ -6036,3 +6036,13 @@ No commits this window.
 No commits this window.
 
 ---
+
+## 2026-11-25 · window `2026-11-25T00:15:03Z` → `2026-11-25T06:15:00Z`
+
+**Total commits:** 2
+
+| Repository | Commits | Latest message |
+|---|---|---|
+| peak-flow/peaktrack | 2 | chore: commit report 2026-11-25 00:15 UTC |
+
+---
